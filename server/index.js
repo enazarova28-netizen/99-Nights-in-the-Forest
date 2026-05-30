@@ -61,6 +61,15 @@ wss.on('connection', (ws, req) => {
 
   const room = lobby.roomState;
 
+  // Evict stale connection for same username (page-refresh / reconnect)
+  const stale = lobby.players.find(p => p.username === user.username);
+  if (stale) {
+    try { stale.ws.close(4000, 'Replaced by new connection'); } catch {}
+    room.removePlayer(user.username);
+    lobby.players = lobby.players.filter(p => p.username !== user.username);
+    console.log(`[room ${lobbyId}] evicted stale connection for ${user.username}`);
+  }
+
   // Register player in the room
   const ok = room.addPlayer(user.username, ws);
   if (!ok) { ws.close(4003, 'Room full'); return; }

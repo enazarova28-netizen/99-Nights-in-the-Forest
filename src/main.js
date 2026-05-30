@@ -103,7 +103,11 @@ class Game {
       // ── ONLINE PLAYING ───────────────────────────────────────────────────
       if (this.state === 'ONLINE') {
         if (e.code === 'Escape') { this._leaveLobby(); return; }
-        // actions sent via sendInput in _loop; only need key state tracking here
+        if (e.code === 'Space') { this._pendingOnlineAction = 'attack'; return; }
+        if (e.code === 'KeyE')  { this._pendingOnlineAction = 'interact'; return; }
+        for (let i = 1; i <= 6; i++) {
+          if (e.code === `Digit${i}`) { this._pendingOnlineAction = `hotbar:${i-1}`; return; }
+        }
         return;
       }
 
@@ -852,8 +856,8 @@ class Game {
     const camX = me ? clamp(me.x + me.w/2 - CANVAS_W/2, 0, MAP_COLS*TILE_SIZE - CANVAS_W) : 0;
     const camY = me ? clamp(me.y + me.h/2 - CANVAS_H/2, 0, MAP_ROWS*TILE_SIZE - CANVAS_H) : 0;
 
-    // World (reuse existing map for local display — server already manages actual state)
-    this.map.draw(ctx, { x: camX, y: camY });
+    // World (reuse local map for display; server manages authoritative state)
+    this.map.draw(ctx, { x: camX, y: camY, sx: 0, sy: 0 });
 
     if (s.phase === 'night') { ctx.fillStyle='rgba(0,0,20,0.38)'; ctx.fillRect(0,0,CANVAS_W,CANVAS_H); }
 
