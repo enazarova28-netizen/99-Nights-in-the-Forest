@@ -113,6 +113,17 @@ class Game {
 
       // Menu mode selection
       if (this.state === 'MENU') {
+        if (e.code === 'KeyQ') {
+          if (Net.username) {
+            Net.logout();
+            this._loginFields = { username:'', password:'', confirm:'', focus:'username' };
+            this._loginError  = '';
+            this.state = 'LOGIN';
+          } else {
+            this.state = 'LOGIN';
+          }
+          return;
+        }
         if (e.code === 'ArrowLeft'  || e.code === 'KeyA') {
           const i = MODES.indexOf(this.menuMode);
           this.menuMode = MODES[(i + MODES.length - 1) % MODES.length];

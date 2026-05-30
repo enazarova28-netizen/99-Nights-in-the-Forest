@@ -69,6 +69,12 @@ class UI {
     ctx.textAlign = 'right';
     ctx.fillText(`Kids: ${game.kidsRescued}/4`, CANVAS_W - 10, 24);
 
+    // Signed-in username (top-left, below HP bar)
+    if (typeof Net !== 'undefined' && Net.username) {
+      ctx.fillStyle = '#44aa44'; ctx.font = '10px monospace'; ctx.textAlign = 'left';
+      ctx.fillText('● ' + Net.username, 10, 38);
+    }
+
     // Wave indicator
     if (game.waveActive) {
       ctx.fillStyle = '#ff4444';
@@ -341,18 +347,47 @@ class UI {
     ctx.fillStyle = '#aaa';
     ctx.font = '12px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('A/D or Left/Right to choose   1/2/3/4 quick select', CANVAS_W / 2, 352);
-
-    // Online account status
-    if (typeof Net !== 'undefined' && Net.username) {
-      ctx.fillStyle = '#44cc44'; ctx.font = '11px monospace';
-      ctx.fillText(`✓ Signed in as ${Net.username}`, CANVAS_W / 2, 368);
-    }
+    ctx.fillText('A/D or ← → to choose   1/2/3/4 quick select', CANVAS_W / 2, 352);
 
     ctx.fillStyle = '#ffd700';
     ctx.font = 'bold 18px monospace';
     const blink = Math.floor(Date.now() / 500) % 2 === 0;
     if (blink) ctx.fillText('Press ENTER to begin', CANVAS_W / 2, CANVAS_H - 50);
+
+    // ── Account panel (top-right) ──────────────────────────────────────────
+    if (typeof Net !== 'undefined' && Net.username) {
+      const apx = CANVAS_W - 178, apy = 8, apw = 170, aph = 68;
+      ctx.fillStyle = 'rgba(0,0,0,0.65)';
+      ctx.fillRect(apx, apy, apw, aph);
+      ctx.strokeStyle = '#44aa44'; ctx.lineWidth = 1.5;
+      ctx.strokeRect(apx, apy, apw, aph);
+
+      // Avatar circle with first letter
+      ctx.fillStyle = '#44aa44';
+      ctx.beginPath(); ctx.arc(apx + 24, apy + 24, 16, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#000'; ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center';
+      ctx.fillText(Net.username[0].toUpperCase(), apx + 24, apy + 29);
+
+      // Name + status
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'left';
+      ctx.fillText(Net.username, apx + 48, apy + 22);
+      ctx.fillStyle = '#44cc44'; ctx.font = '10px monospace';
+      ctx.fillText('● Signed in', apx + 48, apy + 37);
+
+      // Log out hint
+      ctx.fillStyle = '#cc4444'; ctx.font = 'bold 10px monospace';
+      ctx.fillText('[Q] Log out', apx + 48, apy + 55);
+    } else {
+      // Not signed in — prompt
+      const apx = CANVAS_W - 178, apy = 8, apw = 170, aph = 40;
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(apx, apy, apw, aph);
+      ctx.strokeStyle = '#555'; ctx.lineWidth = 1; ctx.strokeRect(apx, apy, apw, aph);
+      ctx.fillStyle = '#888'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
+      ctx.fillText('Not signed in', apx + apw/2, apy + 16);
+      ctx.fillStyle = '#ffd700'; ctx.font = 'bold 10px monospace';
+      ctx.fillText('[Q] Sign in / Register', apx + apw/2, apy + 32);
+    }
   }
 
   drawGameOver(ctx, nightNum) {
