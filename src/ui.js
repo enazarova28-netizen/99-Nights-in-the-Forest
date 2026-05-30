@@ -41,7 +41,6 @@ class UI {
     }
 
     // Downed banners
-    const p = game.player;
     if (p.downed) {
       const pulse = Math.floor(Date.now() / 500) % 2 === 0;
       ctx.fillStyle = pulse ? 'rgba(200,0,0,0.75)' : 'rgba(200,0,0,0.5)';
