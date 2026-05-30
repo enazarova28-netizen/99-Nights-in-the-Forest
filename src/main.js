@@ -300,9 +300,8 @@ class Game {
   }
 
   _startOnlineGame() {
-    // Host signals game start by sending a 'start' action
-    Net.sendInput({}, 'start_game');
-    // State will switch to ONLINE automatically when first tick arrives
+    Net.sendStartGame();
+    // State switches to ONLINE when first tick arrives from the server
   }
 
   _leaveLobby() {

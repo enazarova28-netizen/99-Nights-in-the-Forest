@@ -45,7 +45,7 @@ wss.on('connection', (ws, req) => {
   if (!lobby)            { ws.close(4004, 'Lobby not found'); return; }
   if (lobby.players.length >= 4) { ws.close(4003, 'Lobby full');       return; }
 
-  // Create or resume game room
+  // Create room on first connection (but don't start ticking yet)
   if (!lobby.roomState) {
     lobby.roomState = new GameRoom(lobbyId, lobby.saveData ?? null);
 
@@ -56,8 +56,7 @@ wss.on('connection', (ws, req) => {
         if (dbUser) upsertSave(dbUser.id, saveData);
       }
     });
-
-    lobby.roomState.start();
+    // Room starts only when host sends 'start_game'
   }
 
   const room = lobby.roomState;
@@ -75,6 +74,15 @@ wss.on('connection', (ws, req) => {
   ws.on('message', raw => {
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
+
+    // Host starts the game
+    if (msg.type === 'start_game') {
+      if (user.username === lobby.hostUsername && !room._tickInterval) {
+        console.log(`[room ${lobbyId}] host ${user.username} started the game`);
+        room.start();
+      }
+      return;
+    }
 
     if (msg.type === 'input') {
       const sp = room.players.find(p => p.username === user.username);
