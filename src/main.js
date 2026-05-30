@@ -180,9 +180,17 @@ class Game {
   _handleLoginKey(e) {
     const f = this._loginFields;
 
+    // Left/Right: switch between Sign In and Sign Up tabs
+    if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+      this._loginMode  = this._loginMode === 'login' ? 'register' : 'login';
+      this._loginError = '';
+      f.focus = 'username';
+      return;
+    }
+
+    // Tab: cycle fields
     if (e.code === 'Tab') {
       e.preventDefault();
-      // Cycle focus: username → password → confirm (register only) → username
       const order = this._loginMode === 'register'
         ? ['username','password','confirm']
         : ['username','password'];
@@ -199,9 +207,6 @@ class Game {
       else if (f.focus === 'confirm')  f.confirm  = f.confirm.slice(0,-1);
       this._loginError = ''; return;
     }
-
-    // Toggle mode
-    if (e.key === 'F1' || (e.code === 'Tab' && !e.shiftKey && false)) { /* handled above */ }
 
     // Printable characters
     if (e.key.length === 1) {
@@ -1069,16 +1074,24 @@ document.getElementById('game').addEventListener('click', e => {
   const r  = game.canvas.getBoundingClientRect();
   const mx = (e.clientX - r.left) * (CANVAS_W / r.width);
   const my = (e.clientY - r.top)  * (CANVAS_H / r.height);
-  // Field rects: username [px+20, py+34, pw-40, 28], password [py+104]
-  const px = CANVAS_W/2-180, py = 138, pw = 360;
-  if (mx>=px+20&&mx<=px+pw-20&&my>=py+34&&my<=py+62) game._loginFields.focus='username';
-  else if (mx>=px+20&&mx<=px+pw-20&&my>=py+104&&my<=py+132) game._loginFields.focus='password';
-  else if (mx>=px+20&&mx<=px+pw-20&&my>=py+174&&my<=py+202) game._loginFields.focus='confirm';
-  // Toggle mode click area (bottom of panel)
-  if (mx>=px+20&&mx<=px+pw-20&&my>=py+238&&my<=py+256) {
-    game._loginMode = game._loginMode==='login'?'register':'login';
-    game._loginError='';
+  const px = CANVAS_W/2-190, py = 96, pw = 380;
+  const tabW = pw / 2;
+  const bodyY = py + 40;
+
+  // Tab button clicks (Sign In / Sign Up)
+  if (my >= py && my <= py+40) {
+    if (mx >= px && mx <= px+tabW) {
+      game._loginMode = 'login'; game._loginError = ''; game._loginFields.focus = 'username';
+    } else if (mx >= px+tabW && mx <= px+pw) {
+      game._loginMode = 'register'; game._loginError = ''; game._loginFields.focus = 'username';
+    }
+    return;
   }
+
+  // Field clicks: username [bodyY+22..bodyY+50], password [bodyY+90..bodyY+118], confirm [bodyY+158..bodyY+186]
+  if (mx>=px+20&&mx<=px+pw-20&&my>=bodyY+22&&my<=bodyY+50) game._loginFields.focus='username';
+  else if (mx>=px+20&&mx<=px+pw-20&&my>=bodyY+90&&my<=bodyY+118) game._loginFields.focus='password';
+  else if (mx>=px+20&&mx<=px+pw-20&&my>=bodyY+158&&my<=bodyY+186) game._loginFields.focus='confirm';
 });
 
 const game = new Game(document.getElementById('game'));

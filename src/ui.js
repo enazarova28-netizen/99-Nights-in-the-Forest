@@ -414,48 +414,62 @@ class UI {
     ctx.fillStyle = '#ffd700';
     ctx.font = 'bold 28px monospace'; ctx.textAlign = 'center';
     ctx.shadowColor = '#ff8800'; ctx.shadowBlur = 10;
-    ctx.fillText('99 NIGHTS IN THE FOREST', CANVAS_W/2, 80);
+    ctx.fillText('99 NIGHTS IN THE FOREST', CANVAS_W/2, 72);
     ctx.shadowBlur = 0;
 
-    ctx.fillStyle = '#aaffaa'; ctx.font = '15px monospace';
-    ctx.fillText(mode === 'login' ? 'Sign in to play online' : 'Create your account', CANVAS_W/2, 112);
-
     // Panel
-    const px = CANVAS_W/2 - 180, py = 138, pw = 360, ph = 240;
-    ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(px, py, pw, ph);
-    ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 1.5; ctx.strokeRect(px, py, pw, ph);
+    const px = CANVAS_W/2 - 190, py = 96, pw = 380, ph = mode === 'register' ? 300 : 260;
+
+    // ── Mode tabs ──
+    const tabW = pw / 2;
+    const tabs = [{ id:'login', label:'SIGN IN' }, { id:'register', label:'SIGN UP' }];
+    tabs.forEach((tab, i) => {
+      const tx = px + i * tabW;
+      const active = mode === tab.id;
+      ctx.fillStyle = active ? 'rgba(255,215,0,0.18)' : 'rgba(0,0,0,0.5)';
+      ctx.fillRect(tx, py, tabW, 40);
+      ctx.strokeStyle = active ? '#ffd700' : '#444';
+      ctx.lineWidth = active ? 2 : 1;
+      ctx.strokeRect(tx, py, tabW, 40);
+      ctx.fillStyle = active ? '#ffd700' : '#666';
+      ctx.font = `bold 14px monospace`; ctx.textAlign = 'center';
+      ctx.fillText(tab.label, tx + tabW/2, py + 25);
+    });
+
+    // Panel body (below tabs)
+    const bodyY = py + 40;
+    const bodyH = ph - 40;
+    ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(px, bodyY, pw, bodyH);
+    ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 1.5; ctx.strokeRect(px, bodyY, pw, bodyH);
 
     // Username field
-    this._drawField(ctx, 'Username', fields.username, px+20, py+30, pw-40,
+    this._drawField(ctx, 'Username', fields.username, px+20, bodyY+18, pw-40,
                     fields.focus === 'username');
     // Password field
-    this._drawField(ctx, 'Password', '•'.repeat(fields.password.length), px+20, py+100, pw-40,
+    this._drawField(ctx, 'Password', '•'.repeat(fields.password.length), px+20, bodyY+86, pw-40,
                     fields.focus === 'password');
     // Confirm password (register only)
     if (mode === 'register') {
-      this._drawField(ctx, 'Confirm Password', '•'.repeat(fields.confirm.length), px+20, py+170, pw-40,
+      this._drawField(ctx, 'Confirm Password', '•'.repeat(fields.confirm.length), px+20, bodyY+154, pw-40,
                       fields.focus === 'confirm');
     }
 
     // Error
     if (error) {
       ctx.fillStyle = '#ff6666'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
-      ctx.fillText(error, CANVAS_W/2, py + ph + 18);
+      ctx.fillText(error, CANVAS_W/2, bodyY + bodyH - (mode==='register'?36:52));
     }
 
-    // Submit hint
+    // Submit button
+    const btnY = bodyY + bodyH - 30;
+    ctx.fillStyle = 'rgba(255,215,0,0.15)'; ctx.fillRect(px+60, btnY, pw-120, 24);
+    ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 1; ctx.strokeRect(px+60, btnY, pw-120, 24);
     ctx.fillStyle = '#ffd700'; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center';
-    ctx.fillText('[ Enter ] ' + (mode === 'login' ? 'Login' : 'Register'), CANVAS_W/2, py + ph + (error ? 38 : 22));
+    ctx.fillText('[ Enter ] ' + (mode === 'login' ? 'Sign In' : 'Create Account'), CANVAS_W/2, btnY+16);
 
-    // Toggle
-    ctx.fillStyle = '#888'; ctx.font = '11px monospace';
-    ctx.fillText(mode === 'login'
-      ? 'No account? Press Tab to register'
-      : 'Have an account? Press Tab to login',
-      CANVAS_W/2, py + ph + (error ? 56 : 40));
-
-    ctx.fillStyle = '#555'; ctx.font = '10px monospace';
-    ctx.fillText('Click a field or press Tab to switch fields', CANVAS_W/2, CANVAS_H - 16);
+    // Footer hints
+    ctx.fillStyle = '#555'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('Tab — next field   ← → — switch Sign In / Sign Up', CANVAS_W/2, CANVAS_H - 16);
   }
 
   _drawField(ctx, label, value, x, y, w, focused) {
