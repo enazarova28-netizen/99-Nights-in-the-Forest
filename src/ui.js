@@ -26,6 +26,36 @@ class UI {
     ctx.textAlign = 'left';
     ctx.fillText(`HP  ${p.hp}/${p.maxHp}`, 14, 22);
 
+    // P2 HP bar (if exists)
+    if (game.player2) {
+      const p2    = game.player2;
+      const label = game.menuMode === 'BOT' ? 'BOT' : 'P2';
+      ctx.fillStyle = '#500';
+      ctx.fillRect(CANVAS_W - 150, 10, 140, 14);
+      ctx.fillStyle = p2.downed ? '#555' : '#ff8844';
+      ctx.fillRect(CANVAS_W - 150, 10, 140 * (p2.hp / p2.maxHp), 14);
+      ctx.strokeStyle = p2.downed ? '#ff2222' : '#888'; ctx.lineWidth = p2.downed ? 2 : 1;
+      ctx.strokeRect(CANVAS_W - 150, 10, 140, 14);
+      ctx.fillStyle = '#fff'; ctx.font = '10px monospace'; ctx.textAlign = 'right';
+      ctx.fillText(p2.downed ? `${label}  DOWNED` : `${label}  ${p2.hp}/${p2.maxHp}`, CANVAS_W - 12, 22);
+    }
+
+    // Downed banners
+    const p = game.player;
+    if (p.downed) {
+      const pulse = Math.floor(Date.now() / 500) % 2 === 0;
+      ctx.fillStyle = pulse ? 'rgba(200,0,0,0.75)' : 'rgba(200,0,0,0.5)';
+      ctx.fillRect(0, CANVAS_H / 2 - 36, CANVAS_W, 44);
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center';
+      ctx.fillText('YOU ARE DOWNED — partner: use a Bandage near you to revive!', CANVAS_W / 2, CANVAS_H / 2 - 8);
+    }
+    if (game.player2 && game.player2.downed && !p.downed) {
+      ctx.fillStyle = 'rgba(180,80,0,0.7)';
+      ctx.fillRect(0, CANVAS_H - 32, CANVAS_W, 28);
+      ctx.fillStyle = '#fff'; ctx.font = '13px monospace'; ctx.textAlign = 'center';
+      ctx.fillText(`${game.menuMode === 'BOT' ? 'Bot' : 'P2'} is DOWNED — walk up and press [E] with a Bandage to revive!`, CANVAS_W / 2, CANVAS_H - 13);
+    }
+
     // Night + phase
     const phaseLabel = game.phase === 'day' ? '☀ DAY' : '☾ NIGHT';
     const timeLeft   = Math.ceil(game.phaseTimer / 1000);
@@ -232,7 +262,7 @@ class UI {
   }
 
   // ── Menu / overlays ───────────────────────────────────────────────────────
-  drawMenu(ctx) {
+  drawMenu(ctx, menuMode = 'SOLO') {
     ctx.fillStyle = '#0a1a0a';
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
@@ -272,18 +302,58 @@ class UI {
     ctx.fillStyle = '#fff';
     ctx.font = '13px monospace';
     const controls = [
-      'WASD / Arrows — Move',
-      'Space — Attack / Shoot',
-      'E — Interact / Gather / Place',
-      '1-6 — Select hotbar item',
-      'ESC — Close crafting menu',
+      'WASD — Move   Space — Attack   E — Interact',
+      '1-6 — Hotbar   ESC — Close menu',
     ];
-    controls.forEach((line, i) => ctx.fillText(line, CANVAS_W / 2, 220 + i * 22));
+    controls.forEach((line, i) => ctx.fillText(line, CANVAS_W / 2, 215 + i * 22));
+
+    // Mode selection boxes
+    const modes = [
+      { id: 'SOLO',   label: 'SOLO',      sub: 'WASD only' },
+      { id: 'COOP',   label: 'CO-OP',     sub: 'WASD + Arrows' },
+      { id: 'BOT',    label: 'BOT BUDDY', sub: 'WASD + AI partner' },
+      { id: 'ONLINE', label: '🌐 ONLINE',  sub: 'Up to 4 players' },
+    ];
+    const bw = 130, bh = 64, gap = 12;
+    const totalW = modes.length * bw + (modes.length - 1) * gap;
+    const startX = (CANVAS_W - totalW) / 2;
+    const by2 = 268;
+
+    modes.forEach((m, i) => {
+      const bx = startX + i * (bw + gap);
+      const sel = menuMode === m.id;
+      ctx.fillStyle = sel ? 'rgba(255,215,0,0.15)' : 'rgba(0,0,0,0.4)';
+      ctx.fillRect(bx, by2, bw, bh);
+      ctx.strokeStyle = sel ? '#ffd700' : '#555';
+      ctx.lineWidth = sel ? 2 : 1;
+      ctx.strokeRect(bx, by2, bw, bh);
+      ctx.fillStyle = sel ? '#ffd700' : '#888';
+      ctx.font = `bold 13px monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillText(m.label, bx + bw / 2, by2 + 26);
+      ctx.fillStyle = sel ? '#ccc' : '#555';
+      ctx.font = '10px monospace';
+      ctx.fillText(m.sub, bx + bw / 2, by2 + 46);
+      // Key hint
+      ctx.fillStyle = '#444'; ctx.font = '9px monospace';
+      ctx.fillText(`[${i+1}]`, bx + bw / 2, by2 + 60);
+    });
+
+    ctx.fillStyle = '#aaa';
+    ctx.font = '12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('A/D or Left/Right to choose   1/2/3/4 quick select', CANVAS_W / 2, 352);
+
+    // Online account status
+    if (typeof Net !== 'undefined' && Net.username) {
+      ctx.fillStyle = '#44cc44'; ctx.font = '11px monospace';
+      ctx.fillText(`✓ Signed in as ${Net.username}`, CANVAS_W / 2, 368);
+    }
 
     ctx.fillStyle = '#ffd700';
     ctx.font = 'bold 18px monospace';
     const blink = Math.floor(Date.now() / 500) % 2 === 0;
-    if (blink) ctx.fillText('Press ENTER to begin', CANVAS_W / 2, CANVAS_H - 60);
+    if (blink) ctx.fillText('Press ENTER to begin', CANVAS_W / 2, CANVAS_H - 50);
   }
 
   drawGameOver(ctx, nightNum) {
@@ -328,5 +398,201 @@ class UI {
     ctx.font = 'bold 20px monospace';
     ctx.textAlign = 'center';
     ctx.fillText('NIGHT SURVIVED! +10 HP', CANVAS_W / 2, CANVAS_H / 2);
+  }
+
+  // ── Login / Register screen ───────────────────────────────────────────────
+  drawLoginScreen(ctx, fields, mode, error) {
+    // mode: 'login' | 'register'
+    ctx.fillStyle = '#0a1a0a';
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+    // Stars
+    for (let i = 0; i < 60; i++) {
+      ctx.fillStyle = `rgba(255,255,255,${0.3 + (i%5)*0.1})`;
+      ctx.fillRect((i*137)%CANVAS_W, (i*89)%(CANVAS_H/2), 2, 2);
+    }
+
+    ctx.fillStyle = '#ffd700';
+    ctx.font = 'bold 28px monospace'; ctx.textAlign = 'center';
+    ctx.shadowColor = '#ff8800'; ctx.shadowBlur = 10;
+    ctx.fillText('99 NIGHTS IN THE FOREST', CANVAS_W/2, 80);
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = '#aaffaa'; ctx.font = '15px monospace';
+    ctx.fillText(mode === 'login' ? 'Sign in to play online' : 'Create your account', CANVAS_W/2, 112);
+
+    // Panel
+    const px = CANVAS_W/2 - 180, py = 138, pw = 360, ph = 240;
+    ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(px, py, pw, ph);
+    ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 1.5; ctx.strokeRect(px, py, pw, ph);
+
+    // Username field
+    this._drawField(ctx, 'Username', fields.username, px+20, py+30, pw-40,
+                    fields.focus === 'username');
+    // Password field
+    this._drawField(ctx, 'Password', '•'.repeat(fields.password.length), px+20, py+100, pw-40,
+                    fields.focus === 'password');
+    // Confirm password (register only)
+    if (mode === 'register') {
+      this._drawField(ctx, 'Confirm Password', '•'.repeat(fields.confirm.length), px+20, py+170, pw-40,
+                      fields.focus === 'confirm');
+    }
+
+    // Error
+    if (error) {
+      ctx.fillStyle = '#ff6666'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
+      ctx.fillText(error, CANVAS_W/2, py + ph + 18);
+    }
+
+    // Submit hint
+    ctx.fillStyle = '#ffd700'; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('[ Enter ] ' + (mode === 'login' ? 'Login' : 'Register'), CANVAS_W/2, py + ph + (error ? 38 : 22));
+
+    // Toggle
+    ctx.fillStyle = '#888'; ctx.font = '11px monospace';
+    ctx.fillText(mode === 'login'
+      ? 'No account? Press Tab to register'
+      : 'Have an account? Press Tab to login',
+      CANVAS_W/2, py + ph + (error ? 56 : 40));
+
+    ctx.fillStyle = '#555'; ctx.font = '10px monospace';
+    ctx.fillText('Click a field or press Tab to switch fields', CANVAS_W/2, CANVAS_H - 16);
+  }
+
+  _drawField(ctx, label, value, x, y, w, focused) {
+    ctx.fillStyle = '#666'; ctx.font = '10px monospace'; ctx.textAlign = 'left';
+    ctx.fillText(label, x, y);
+    const fh = 28;
+    ctx.fillStyle = focused ? 'rgba(255,215,0,0.1)' : 'rgba(255,255,255,0.07)';
+    ctx.fillRect(x, y+4, w, fh);
+    ctx.strokeStyle = focused ? '#ffd700' : '#444'; ctx.lineWidth = 1.5;
+    ctx.strokeRect(x, y+4, w, fh);
+    ctx.fillStyle = focused ? '#fff' : '#ccc'; ctx.font = '13px monospace';
+    ctx.fillText(value + (focused && Math.floor(Date.now()/500)%2===0 ? '|' : ''), x+8, y+22);
+  }
+
+  // ── Lobby list screen ────────────────────────────────────────────────────
+  drawLobbyListScreen(ctx, lobbies, error) {
+    ctx.fillStyle = '#0a1a0a'; ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    for (let i=0;i<60;i++) {
+      ctx.fillStyle=`rgba(255,255,255,${0.3+(i%5)*0.1})`;
+      ctx.fillRect((i*137)%CANVAS_W,(i*89)%(CANVAS_H/2),2,2);
+    }
+
+    ctx.fillStyle = '#ffd700'; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('ONLINE LOBBIES', CANVAS_W/2, 54);
+    ctx.fillStyle = '#aaa'; ctx.font = '11px monospace';
+    ctx.fillText('Logged in as: ' + Net.username, CANVAS_W/2, 72);
+
+    // Create button
+    const cbx = CANVAS_W/2 - 80, cby = 84;
+    ctx.fillStyle = 'rgba(255,215,0,0.15)'; ctx.fillRect(cbx, cby, 160, 28);
+    ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 1; ctx.strokeRect(cbx, cby, 160, 28);
+    ctx.fillStyle = '#ffd700'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('[C] Create New Lobby', CANVAS_W/2, cby+18);
+
+    // Lobby list
+    const startY = 128;
+    if (!lobbies || lobbies.length === 0) {
+      ctx.fillStyle = '#555'; ctx.font = '13px monospace'; ctx.textAlign = 'center';
+      ctx.fillText('No lobbies yet — create one!', CANVAS_W/2, startY + 30);
+    } else {
+      lobbies.forEach((l, i) => {
+        const ry = startY + i * 52;
+        const full = l.playerCount >= 4;
+        ctx.fillStyle = full ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.06)';
+        ctx.fillRect(CANVAS_W/2-240, ry, 480, 44);
+        ctx.strokeStyle = full ? '#444' : '#666'; ctx.lineWidth = 1;
+        ctx.strokeRect(CANVAS_W/2-240, ry, 480, 44);
+
+        ctx.fillStyle = full ? '#555' : '#fff'; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'left';
+        ctx.fillText(l.name, CANVAS_W/2-228, ry+18);
+        ctx.fillStyle = '#888'; ctx.font = '11px monospace';
+        ctx.fillText(`Host: ${l.host}`, CANVAS_W/2-228, ry+35);
+
+        ctx.fillStyle = full ? '#ff4444' : '#aaffaa'; ctx.textAlign = 'right';
+        ctx.fillText(`${l.playerCount}/4`, CANVAS_W/2+228, ry+18);
+        if (!full) {
+          ctx.fillStyle = '#ffd700'; ctx.font = 'bold 11px monospace';
+          ctx.fillText(`[${i+1}] Join`, CANVAS_W/2+228, ry+35);
+        }
+      });
+    }
+
+    // Error / refresh
+    if (error) {
+      ctx.fillStyle = '#ff6666'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
+      ctx.fillText(error, CANVAS_W/2, CANVAS_H - 44);
+    }
+    ctx.fillStyle = '#555'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('[R] Refresh   [Esc] Back to local menu   [Q] Logout', CANVAS_W/2, CANVAS_H - 16);
+  }
+
+  // ── Lobby wait / pre-game room ────────────────────────────────────────────
+  drawLobbyWaitScreen(ctx, lobbyPlayers, isHost) {
+    ctx.fillStyle = '#0a1a0a'; ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    for (let i=0;i<60;i++) {
+      ctx.fillStyle=`rgba(255,255,255,${0.3+(i%5)*0.1})`;
+      ctx.fillRect((i*137)%CANVAS_W,(i*89)%(CANVAS_H/2),2,2);
+    }
+
+    ctx.fillStyle = '#ffd700'; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('WAITING FOR PLAYERS', CANVAS_W/2, 60);
+    ctx.fillStyle = '#aaa'; ctx.font = '12px monospace';
+    ctx.fillText('Up to 4 players can join. Share this lobby!', CANVAS_W/2, 84);
+
+    // Player slots
+    const colors = ['#4488ff','#ff8844','#44cc44','#cc44cc'];
+    for (let i = 0; i < 4; i++) {
+      const pl = lobbyPlayers[i];
+      const sx = CANVAS_W/2 - 300 + i * 160, sy = 120;
+      ctx.fillStyle = pl ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.4)';
+      ctx.fillRect(sx, sy, 140, 80);
+      ctx.strokeStyle = pl ? colors[i] : '#333'; ctx.lineWidth = pl ? 2 : 1;
+      ctx.strokeRect(sx, sy, 140, 80);
+
+      if (pl) {
+        // Player swatch
+        ctx.fillStyle = colors[i]; ctx.fillRect(sx+10, sy+10, 24, 36);
+        ctx.fillStyle = '#fff'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'left';
+        ctx.fillText(pl.username, sx+42, sy+26);
+        ctx.fillStyle = '#888'; ctx.font = '10px monospace';
+        ctx.fillText(i === 0 ? 'Host' : `P${i+1}`, sx+42, sy+42);
+      } else {
+        ctx.fillStyle = '#444'; ctx.font = '12px monospace'; ctx.textAlign = 'center';
+        ctx.fillText('Empty', sx+70, sy+46);
+      }
+    }
+
+    // Controls reminder
+    ctx.fillStyle = '#ccc'; ctx.font = '12px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('Each player uses WASD to move, Space to attack, E to interact', CANVAS_W/2, 240);
+    ctx.fillStyle = '#888'; ctx.font = '11px monospace';
+    ctx.fillText('Resources are individual. Crafting & kid rescue shared.', CANVAS_W/2, 260);
+
+    if (isHost) {
+      const blink = Math.floor(Date.now()/500)%2===0;
+      ctx.fillStyle = blink ? '#ffd700' : '#aa8800';
+      ctx.font = 'bold 18px monospace';
+      ctx.fillText('[ Enter ] Start Game', CANVAS_W/2, 310);
+      ctx.fillStyle = '#888'; ctx.font = '11px monospace';
+      ctx.fillText('(You are the host — others are waiting)', CANVAS_W/2, 330);
+    } else {
+      ctx.fillStyle = '#aaffaa'; ctx.font = '15px monospace';
+      ctx.fillText('Waiting for host to start…', CANVAS_W/2, 314);
+    }
+
+    ctx.fillStyle = '#555'; ctx.font = '10px monospace';
+    ctx.fillText('[Esc] Leave lobby', CANVAS_W/2, CANVAS_H - 16);
+  }
+
+  // ── Online game HUD overlay (announcement from server) ────────────────────
+  drawOnlineAnnouncement(ctx, text) {
+    if (!text) return;
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0, CANVAS_H/2 - 40, CANVAS_W, 80);
+    ctx.fillStyle = 'rgba(255,80,0,1)';
+    ctx.font = 'bold 28px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(text, CANVAS_W/2, CANVAS_H/2 + 10);
   }
 }

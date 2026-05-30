@@ -40,6 +40,31 @@ class Entity {
     this.y = clamp(this.y, TILE_SIZE, (MAP_ROWS - 2) * TILE_SIZE - this.h);
   }
 
+  // Push entity out of any solid tile it is overlapping
+  unstuck(map) {
+    const ts = TILE_SIZE;
+    const x0 = Math.floor(this.x / ts);
+    const x1 = Math.floor((this.x + this.w - 1) / ts);
+    const y0 = Math.floor(this.y / ts);
+    const y1 = Math.floor((this.y + this.h - 1) / ts);
+
+    for (let ty = y0; ty <= y1; ty++) {
+      for (let tx = x0; tx <= x1; tx++) {
+        if (!map.isSolid(tx, ty, this.isPlayer)) continue;
+        const tl = tx * ts, tt = ty * ts;
+        const ol = (this.x + this.w) - tl;   // overlap from left
+        const or2 = (tl + ts) - this.x;       // overlap from right
+        const ot = (this.y + this.h) - tt;    // overlap from top
+        const ob = (tt + ts) - this.y;        // overlap from bottom
+        const m = Math.min(ol, or2, ot, ob);
+        if      (m === ol)  this.x = tl - this.w;
+        else if (m === or2) this.x = tl + ts;
+        else if (m === ot)  this.y = tt - this.h;
+        else                this.y = tt + ts;
+      }
+    }
+  }
+
   drawHpBar(ctx, sx, sy) {
     ctx.fillStyle = '#300';
     ctx.fillRect(sx, sy - 6, this.w, 4);
@@ -57,6 +82,8 @@ class Player extends Entity {
     this.hp        = 100;
     this.speed     = 160;
     this.facing    = { x: 1, y: 0 };
+    this.bodyColor = '#4488ff';
+    this.downed    = false;
 
     // Combat
     this.weapon         = 'fist';
@@ -145,12 +172,30 @@ class Player extends Entity {
     return false;
   }
 
-  update(dt, keys, map) {
+  takeDamage(amt) {
+    if (this.downed) return;
+    this.hp -= amt;
+    this.flashTimer = 180;
+    if (this.hp <= 0) { this.hp = 0; this.downed = true; }
+  }
+
+  revive(hp = 25) {
+    this.downed = false;
+    this.hp = hp;
+    this.flashTimer = 0;
+    this.dmgCooldown = 1000;
+  }
+
+  update(dt, up, down, left, right, map) {
+    if (this.downed) {
+      if (this.dmgCooldown > 0) this.dmgCooldown -= dt;
+      return;
+    }
     let dx = 0, dy = 0;
-    if (keys['KeyW'] || keys['ArrowUp'])    dy -= 1;
-    if (keys['KeyS'] || keys['ArrowDown'])  dy += 1;
-    if (keys['KeyA'] || keys['ArrowLeft'])  dx -= 1;
-    if (keys['KeyD'] || keys['ArrowRight']) dx += 1;
+    if (up)    dy -= 1;
+    if (down)  dy += 1;
+    if (left)  dx -= 1;
+    if (right) dx += 1;
 
     if (dx !== 0 || dy !== 0) {
       const n = normalize(dx, dy);
@@ -166,14 +211,36 @@ class Player extends Entity {
       this.hitbox.timer -= dt;
       if (this.hitbox.timer <= 0) this.hitbox = null;
     }
+
+    // Always push out of any solid tile (handles enemy shoves, regrown trees, etc.)
+    this.unstuck(map);
   }
 
   draw(ctx, sx, sy) {
+    // Downed: draw lying sideways
+    if (this.downed) {
+      ctx.globalAlpha = 0.7;
+      ctx.fillStyle = this.bodyColor;
+      ctx.fillRect(sx - 4, sy + 14, this.h, 10); // body lying flat
+      ctx.fillStyle = '#ffcc99';
+      ctx.beginPath();
+      ctx.arc(sx - 4 + this.h + 6, sy + 19, 7, 0, Math.PI * 2); // head at side
+      ctx.fill();
+      // Pulsing red cross to show they need help
+      const pulse = Math.floor(Date.now() / 400) % 2 === 0;
+      ctx.fillStyle = pulse ? '#ff2222' : '#ff8888';
+      ctx.font = 'bold 14px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('+', sx + this.w / 2, sy - 4);
+      ctx.globalAlpha = 1;
+      return;
+    }
+
     // Flash white when hurt
     if (this.flashTimer > 0 && Math.floor(this.flashTimer / 50) % 2 === 0) {
       ctx.fillStyle = '#fff';
     } else {
-      ctx.fillStyle = '#4488ff';
+      ctx.fillStyle = this.bodyColor;
     }
     ctx.fillRect(sx, sy + 6, this.w, this.h - 6);
 

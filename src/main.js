@@ -2,17 +2,40 @@ class Game {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx    = canvas.getContext('2d');
-    this.state  = 'MENU';
+
+    // Check for existing session → start at LOGIN if offline, skip to MENU after session restore
+    this.state  = 'LOGIN';
 
     // Phase
     this.phase       = 'day';
     this.nightNumber = 0;
     this.phaseTimer  = DAY_DURATION;
 
+    // Mode: 'SOLO' | 'COOP' | 'BOT' | 'ONLINE'
+    this.menuMode = 'SOLO';
+
+    // ── Online state ──────────────────────────────────────────────────────
+    this._loginFields  = { username:'', password:'', confirm:'', focus:'username' };
+    this._loginMode    = 'login'; // 'login' | 'register'
+    this._loginError   = '';
+    this._lobbyList    = [];
+    this._lobbyPlayers = []; // connected players in waiting room
+    this._currentLobbyId = null;
+    this._isHost       = false;
+    this._onlineState  = null; // last tick from server
+    this._onlineGameOver = false;
+    this._onlineVictory  = false;
+
+    // Try to restore session silently; if fails, stay at LOGIN
+    if (Net.restoreSession()) {
+      this.state = 'MENU';
+    }
+
     // Systems
     this.map      = new TileMap();
     this.camera   = new Camera();
     this.player   = new Player(PLAYER_START.tx, PLAYER_START.ty);
+    this.player2  = null;
     this.crafting = new CraftingSystem(this.player);
     this.ui       = new UI(this);
 
@@ -32,7 +55,8 @@ class Game {
     this.deerDefeated = false;
 
     // Wave pending count
-    this._pendingWaves = 0;
+    this._pendingWaves    = 0;
+    this._waveTransitioning = false; // prevents setTimeout from firing every frame
 
     // UI state
     this.nearCraftingTable = false;
@@ -49,11 +73,65 @@ class Game {
   }
 
   _setupEvents() {
+    const MODES = ['SOLO', 'COOP', 'BOT', 'ONLINE'];
     window.addEventListener('keydown', e => {
       if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
       this.keys[e.code] = true;
 
-      if (this.state === 'MENU' && e.code === 'Enter') { this._startGame(); return; }
+      // ── LOGIN / REGISTER ──────────────────────────────────────────────────
+      if (this.state === 'LOGIN') {
+        this._handleLoginKey(e); return;
+      }
+
+      // ── LOBBY LIST ────────────────────────────────────────────────────────
+      if (this.state === 'LOBBY_LIST') {
+        if (e.code === 'Escape') { this.state = 'MENU'; return; }
+        if (e.code === 'KeyR')   { this._refreshLobbies(); return; }
+        if (e.code === 'KeyQ')   { Net.logout(); this.state = 'LOGIN'; this._loginFields = {username:'',password:'',confirm:'',focus:'username'}; return; }
+        if (e.code === 'KeyC')   { this._promptCreateLobby(); return; }
+        // 1-9 join a lobby
+        const digit = parseInt(e.key);
+        if (!isNaN(digit) && digit >= 1 && digit <= this._lobbyList.length) {
+          this._joinLobby(this._lobbyList[digit-1].id); return;
+        }
+        return;
+      }
+
+      // ── LOBBY WAIT ────────────────────────────────────────────────────────
+      if (this.state === 'LOBBY_WAIT') {
+        if (e.code === 'Escape') { this._leaveLobby(); return; }
+        if (e.code === 'Enter' && this._isHost) { this._startOnlineGame(); return; }
+        return;
+      }
+
+      // ── ONLINE PLAYING ───────────────────────────────────────────────────
+      if (this.state === 'ONLINE') {
+        if (e.code === 'Escape') { this._leaveLobby(); return; }
+        // actions sent via sendInput in _loop; only need key state tracking here
+        return;
+      }
+
+      // Menu mode selection
+      if (this.state === 'MENU') {
+        if (e.code === 'ArrowLeft'  || e.code === 'KeyA') {
+          const i = MODES.indexOf(this.menuMode);
+          this.menuMode = MODES[(i + MODES.length - 1) % MODES.length];
+        }
+        if (e.code === 'ArrowRight' || e.code === 'KeyD') {
+          const i = MODES.indexOf(this.menuMode);
+          this.menuMode = MODES[(i + 1) % MODES.length];
+        }
+        if (e.code === 'Digit1') this.menuMode = 'SOLO';
+        if (e.code === 'Digit2') this.menuMode = 'COOP';
+        if (e.code === 'Digit3') this.menuMode = 'BOT';
+        if (e.code === 'Digit4') this.menuMode = 'ONLINE';
+        if (e.code === 'Enter') {
+          if (this.menuMode === 'ONLINE') { this._goToLobbyList(); return; }
+          this._startGame(); return;
+        }
+        return;
+      }
+
       if ((this.state === 'GAME_OVER' || this.state === 'VICTORY') && e.code === 'Enter') {
         this._resetGame(); return;
       }
@@ -61,14 +139,30 @@ class Game {
 
       if (this.state !== 'PLAYING' && this.state !== 'CRAFTING') return;
 
-      // Hotbar slot
+      // P1 hotbar slots
       for (let i = 1; i <= 6; i++) {
-        if (e.code === `Digit${i}`) this.player.slot = i - 1;
+        if (e.code === `Digit${i}`) {
+          this.player.slot = i - 1;
+          if (this.state === 'ONLINE') this._pendingOnlineAction = `hotbar:${i-1}`;
+        }
       }
 
-      if (e.code === 'Space' && this.state === 'PLAYING') this._doAttack();
-      if (e.code === 'KeyE'  && this.state === 'PLAYING') this._doInteract();
-      if (e.code === 'KeyE'  && this.state === 'CRAFTING') { this.state = 'PLAYING'; }
+      if (e.code === 'Space' && this.state === 'PLAYING') {
+        this._doAttack();
+      } else if (e.code === 'Space' && this.state === 'ONLINE') {
+        this._pendingOnlineAction = 'attack';
+      } else if (e.code === 'KeyE' && this.state === 'ONLINE') {
+        this._pendingOnlineAction = 'interact';
+      } else if (e.code === 'KeyE') {
+        if      (this.state === 'PLAYING')  this._doInteract();
+        else if (this.state === 'CRAFTING') this.state = 'PLAYING';
+      }
+
+      // P2 controls (COOP mode only)
+      if (this.menuMode === 'COOP' && this.player2 && this.state === 'PLAYING') {
+        if (e.code === 'Enter') this._doAttackP2();
+        if (e.code === 'ShiftRight') this._doInteractP2();
+      }
     });
 
     window.addEventListener('keyup', e => { this.keys[e.code] = false; });
@@ -82,24 +176,174 @@ class Game {
     });
   }
 
+  // ── Login / Register handling ─────────────────────────────────────────────
+  _handleLoginKey(e) {
+    const f = this._loginFields;
+
+    if (e.code === 'Tab') {
+      e.preventDefault();
+      // Cycle focus: username → password → confirm (register only) → username
+      const order = this._loginMode === 'register'
+        ? ['username','password','confirm']
+        : ['username','password'];
+      const idx = order.indexOf(f.focus);
+      f.focus = order[(idx+1) % order.length];
+      return;
+    }
+
+    if (e.code === 'Enter') { this._submitLogin(); return; }
+
+    if (e.key === 'Backspace') {
+      if (f.focus === 'username') f.username = f.username.slice(0,-1);
+      else if (f.focus === 'password') f.password = f.password.slice(0,-1);
+      else if (f.focus === 'confirm')  f.confirm  = f.confirm.slice(0,-1);
+      this._loginError = ''; return;
+    }
+
+    // Toggle mode
+    if (e.key === 'F1' || (e.code === 'Tab' && !e.shiftKey && false)) { /* handled above */ }
+
+    // Printable characters
+    if (e.key.length === 1) {
+      if (f.focus === 'username' && f.username.length < 20) f.username += e.key;
+      else if (f.focus === 'password' && f.password.length < 64) f.password += e.key;
+      else if (f.focus === 'confirm'  && f.confirm.length  < 64) f.confirm  += e.key;
+      this._loginError = '';
+    }
+  }
+
+  async _submitLogin() {
+    const f = this._loginFields;
+    if (!f.username || !f.password) { this._loginError = 'Fill in all fields'; return; }
+
+    if (this._loginMode === 'register') {
+      if (f.password !== f.confirm) { this._loginError = 'Passwords do not match'; return; }
+      try {
+        await Net.register(f.username, f.password);
+        this._loginError = '';
+        this.state = 'MENU';
+      } catch(err) { this._loginError = err.message; }
+    } else {
+      try {
+        await Net.login(f.username, f.password);
+        this._loginError = '';
+        this.state = 'MENU';
+      } catch(err) { this._loginError = err.message; }
+    }
+  }
+
+  // ── Lobby management ──────────────────────────────────────────────────────
+  async _goToLobbyList() {
+    this.state = 'LOBBY_LIST';
+    await this._refreshLobbies();
+  }
+
+  async _refreshLobbies() {
+    try { this._lobbyList = await Net.fetchLobbies(); }
+    catch(e) { this._loginError = 'Could not reach server'; }
+  }
+
+  async _promptCreateLobby() {
+    const name = prompt('Lobby name (max 32 chars):');
+    if (!name) return;
+    try {
+      const id = await Net.createLobby(name);
+      this._isHost = true;
+      this._currentLobbyId = id;
+      this._lobbyPlayers   = [];
+      this.state = 'LOBBY_WAIT';
+      this._connectWS(id);
+    } catch(e) { this._loginError = e.message; }
+  }
+
+  async _joinLobby(lobbyId) {
+    try {
+      await Net.joinLobby(lobbyId);
+      this._isHost = false;
+      this._currentLobbyId = lobbyId;
+      this._lobbyPlayers   = [];
+      this.state = 'LOBBY_WAIT';
+      this._connectWS(lobbyId);
+    } catch(e) { this._loginError = e.message; }
+  }
+
+  _connectWS(lobbyId) {
+    Net.connect(lobbyId, {
+      onLobbyPlayers: players => { this._lobbyPlayers = players; },
+      onTick: state => {
+        this._onlineState = state;
+        if (this.state === 'LOBBY_WAIT') this.state = 'ONLINE';
+      },
+      onVictory:  () => { this._onlineVictory = true; },
+      onGameOver: () => { this._onlineGameOver = true; },
+      onDisconnect: () => {
+        if (this.state === 'ONLINE' || this.state === 'LOBBY_WAIT') {
+          this.state = 'MENU';
+          this._loginError = 'Disconnected from server';
+        }
+      },
+    });
+  }
+
+  _startOnlineGame() {
+    // Host signals game start by sending a 'start' action
+    Net.sendInput({}, 'start_game');
+    // State will switch to ONLINE automatically when first tick arrives
+  }
+
+  _leaveLobby() {
+    Net.disconnect();
+    this._currentLobbyId = null;
+    this._lobbyPlayers   = [];
+    this._onlineState    = null;
+    this._onlineGameOver = false;
+    this._onlineVictory  = false;
+    this.state = 'LOBBY_LIST';
+    this._refreshLobbies();
+  }
+
+  // ── Online input sending ──────────────────────────────────────────────────
+  _sendOnlineInput() {
+    const k = this.keys;
+    const keys = {
+      up:    !!(k['KeyW']  || k['ArrowUp']),
+      down:  !!(k['KeyS']  || k['ArrowDown']),
+      left:  !!(k['KeyA']  || k['ArrowLeft']),
+      right: !!(k['KeyD']  || k['ArrowRight']),
+    };
+    // Pending action (one-shot)
+    const action = this._pendingOnlineAction || null;
+    this._pendingOnlineAction = null;
+    Net.sendInput(keys, action);
+  }
+
+  _makePlayer2() {
+    const p2 = new Player(PLAYER_START.tx + 2, PLAYER_START.ty);
+    p2.bodyColor = '#ff8844';
+    return p2;
+  }
+
   _startGame() {
     this.state       = 'PLAYING';
     this.phase       = 'day';
     this.nightNumber = 0;
     this.phaseTimer  = DAY_DURATION;
+    if (this.menuMode !== 'SOLO') this.player2 = this._makePlayer2();
   }
 
   _resetGame() {
     this.map      = new TileMap();
     this.player   = new Player(PLAYER_START.tx, PLAYER_START.ty);
+    this.player2  = this.menuMode !== 'SOLO' ? this._makePlayer2() : null;
     this.crafting = new CraftingSystem(this.player);
     this.enemies  = [];
     this.projectiles = [];
     this.kids     = KID_POSITIONS.map((p, i) => new Kid(p.tx, p.ty, i));
     this.kidsRescued = 0;
-    this.waveActive    = false;
-    this.currentWave   = 0;
-    this._pendingWaves = 0;
+    this.waveActive         = false;
+    this.currentWave        = 0;
+    this._pendingWaves      = 0;
+    this._waveTransitioning = false;
     this.deer = null;
     this.deerDefeated = false;
     this.phase       = 'day';
@@ -145,8 +389,10 @@ class Game {
 
     // Night survived bonus
     this.player.hp = Math.min(this.player.maxHp, this.player.hp + 10);
+    if (this.player2 && this.player2.alive)
+      this.player2.hp = Math.min(this.player2.maxHp, this.player2.hp + 10);
     this.nightSurvivedBanner = 2000;
-    this.map.onNightEnd();
+    this.map.onNightEnd(this.player);
 
     if (this.nightNumber >= TOTAL_NIGHTS) {
       if (this.kidsRescued >= 4) {
@@ -216,10 +462,15 @@ class Game {
   }
 
   _checkWaveCleared() {
+    if (!this.waveActive || this._waveTransitioning) return;
     const villagers = this.enemies.filter(e => e instanceof Villager && e.alive);
-    if (this.waveActive && villagers.length === 0) {
+    if (villagers.length === 0) {
       if (this._pendingWaves > 0) {
-        setTimeout(() => this._startWave(), 2000);
+        this._waveTransitioning = true;
+        setTimeout(() => {
+          this._waveTransitioning = false;
+          this._startWave();
+        }, 2500);
       } else {
         this.waveActive = false;
       }
@@ -249,25 +500,39 @@ class Game {
     const hb = p.swing();
     if (!hb) return;
 
-    // Check hits on enemies
+    // Check hits on enemies (mark so _update doesn't double-hit)
     for (const e of this.enemies) {
       if (!e.alive) continue;
       if (rectOverlap(hb, e)) {
         e.takeDamage(hb.dmg);
-        if (!e.alive && e instanceof BipedalDeer) {
-          this.deerDefeated = true;
-        }
+        e._hitThisSwing = true;
+        if (!e.alive && e instanceof BipedalDeer) this.deerDefeated = true;
       }
     }
+  }
+
+  _tryRevive(reviver, downed) {
+    if (!downed || !downed.downed) return false;
+    if (distance({ x: reviver.x, y: reviver.y }, { x: downed.x, y: downed.y }) > TILE_SIZE * 2) return false;
+    if (!reviver.removeItem('bandage')) return false;
+    downed.revive(25);
+    this.announcementText  = 'Partner revived!';
+    this.announcementTimer = 1500;
+    return true;
   }
 
   _doInteract() {
     const p = this.player;
 
-    // Priority 1: crafting table
-    const ctx = CRAFTING_TABLE_POS.tx * TILE_SIZE;
-    const cty = CRAFTING_TABLE_POS.ty * TILE_SIZE;
-    if (distance({ x: p.x, y: p.y }, { x: ctx, y: cty }) < TILE_SIZE * 2.5) {
+    // Priority 0: revive downed P2
+    if (this.player2 && this.player2.downed && this._tryRevive(p, this.player2)) return;
+
+    // Priority 1: crafting table — generous 4-tile range
+    const ctx = CRAFTING_TABLE_POS.tx * TILE_SIZE + TILE_SIZE / 2;
+    const cty = CRAFTING_TABLE_POS.ty * TILE_SIZE + TILE_SIZE / 2;
+    const pdx = p.x + p.w / 2;
+    const pdy = p.y + p.h / 2;
+    if (distance({ x: pdx, y: pdy }, { x: ctx, y: cty }) < TILE_SIZE * 4) {
       this.state = 'CRAFTING'; return;
     }
 
@@ -332,6 +597,99 @@ class Game {
     }
   }
 
+  // ── P2 actions ────────────────────────────────────────────────────────────
+  _doAttackP2() {
+    const p2 = this.player2;
+    if (!p2 || !p2.alive) return;
+    const hb = p2.swing();
+    if (!hb) return;
+    for (const e of this.enemies) {
+      if (!e.alive || e._hitThisSwing) continue;
+      if (rectOverlap(hb, e)) {
+        e.takeDamage(hb.dmg);
+        e._hitThisSwing = true;
+        if (!e.alive && e instanceof BipedalDeer) this.deerDefeated = true;
+      }
+    }
+  }
+
+  _doInteractP2() {
+    const p2 = this.player2;
+    if (!p2 || p2.downed) return;
+
+    // Revive P1 if downed
+    if (this.player.downed && this._tryRevive(p2, this.player)) return;
+
+    // Gather from adjacent tiles
+    const pcx = Math.floor((p2.x + p2.w / 2) / TILE_SIZE);
+    const pcy = Math.floor((p2.y + p2.h / 2) / TILE_SIZE);
+    for (const { tx, ty } of [
+      { tx: pcx, ty: pcy - 1 }, { tx: pcx, ty: pcy + 1 },
+      { tx: pcx - 1, ty: pcy }, { tx: pcx + 1, ty: pcy }, { tx: pcx, ty: pcy }
+    ]) {
+      const tile = this.map.get(tx, ty);
+      if (tile === T.TREE) {
+        this.player.addRes('wood', 1); this.map.chopTree(tx, ty); return;
+      } else if (tile === T.ROCK) {
+        this.player.addRes('stone', 1); this.map.set(tx, ty, T.GRASS); return;
+      } else if (tile === T.HERB) {
+        this.player.addRes('herb', 1); this.map.set(tx, ty, T.GRASS); return;
+      }
+    }
+  }
+
+  // ── Bot AI ────────────────────────────────────────────────────────────────
+  _botMove(dt) {
+    const bot = this.player2;
+    if (bot.downed) return;
+    const p   = this.player;
+
+    // Revive P1 if downed and bot has a bandage
+    if (p.downed) {
+      const d = distance({ x: bot.x, y: bot.y }, { x: p.x, y: p.y });
+      if (d < TILE_SIZE * 2) {
+        this._tryRevive(bot, p);
+      } else {
+        bot.update(dt,
+          p.y < bot.y - 6, p.y > bot.y + 6,
+          p.x < bot.x - 6, p.x > bot.x + 6,
+          this.map);
+      }
+      return;
+    }
+
+    // Find nearest live enemy within aggro range
+    let target = null;
+    let bestDist = 260;
+    for (const e of this.enemies) {
+      if (!e.alive) continue;
+      const d = distance({ x: bot.x + bot.w / 2, y: bot.y + bot.h / 2 },
+                         { x: e.x  + e.w  / 2, y: e.y  + e.h  / 2 });
+      if (d < bestDist) { bestDist = d; target = e; }
+    }
+
+    let tx, ty;
+    if (target) {
+      tx = target.x + target.w / 2;
+      ty = target.y + target.h / 2;
+      // Attack when in melee range
+      if (bestDist < 38 && bot.atkCooldown <= 0) this._doAttackP2();
+    } else {
+      // Orbit slightly offset from P1 so they don't stack
+      tx = p.x + p.w / 2 + 36;
+      ty = p.y + p.h / 2;
+    }
+
+    const bx = bot.x + bot.w / 2, by = bot.y + bot.h / 2;
+    const ddx = tx - bx, ddy = ty - by;
+    const dist2 = Math.hypot(ddx, ddy);
+    const move  = dist2 > 18;
+    bot.update(dt,
+      move && ddy < -6, move && ddy > 6,
+      move && ddx < -6, move && ddx > 6,
+      this.map);
+  }
+
   // ── Update ────────────────────────────────────────────────────────────────
   _update(dt) {
     const p = this.player;
@@ -344,12 +702,26 @@ class Game {
     }
 
     // Player update
-    p.update(dt, this.keys, this.map);
+    const k = this.keys;
+    p.update(dt, k['KeyW'], k['KeyS'], k['KeyA'], k['KeyD'], this.map);
 
-    // Proximity to crafting table
-    const ctx2 = CRAFTING_TABLE_POS.tx * TILE_SIZE;
-    const cty2 = CRAFTING_TABLE_POS.ty * TILE_SIZE;
-    this.nearCraftingTable = distance({ x: p.x, y: p.y }, { x: ctx2, y: cty2 }) < TILE_SIZE * 2.5;
+    // Player 2 update
+    if (this.player2 && !this.player2.downed) {
+      if (this.menuMode === 'COOP') {
+        this.player2.update(dt,
+          k['ArrowUp'], k['ArrowDown'], k['ArrowLeft'], k['ArrowRight'], this.map);
+      } else if (this.menuMode === 'BOT') {
+        this._botMove(dt);
+      }
+    }
+
+    // Proximity to crafting table (keep in sync with _doInteract range)
+    const ctx2 = CRAFTING_TABLE_POS.tx * TILE_SIZE + TILE_SIZE / 2;
+    const cty2 = CRAFTING_TABLE_POS.ty * TILE_SIZE + TILE_SIZE / 2;
+    this.nearCraftingTable = distance(
+      { x: p.x + p.w / 2, y: p.y + p.h / 2 },
+      { x: ctx2, y: cty2 }
+    ) < TILE_SIZE * 4;
 
     // Enemies
     for (const e of this.enemies) {
@@ -370,6 +742,18 @@ class Game {
       }
     }
     this.enemies = this.enemies.filter(e => e.alive);
+
+    // P2 contact damage from enemies
+    if (this.player2 && !this.player2.downed) {
+      const p2 = this.player2;
+      for (const e of this.enemies) {
+        if (!e.alive || e.dmgCooldown > 0 || p2.dmgCooldown > 0) continue;
+        if (rectOverlap(e, p2)) {
+          p2.takeDamage(e.damage);
+          p2.dmgCooldown = 700;
+        }
+      }
+    }
 
     // Player attack hitbox vs enemies (handled in _doAttack for melee,
     // but also check if hitbox is still active after the key press)
@@ -415,9 +799,10 @@ class Game {
         }
       } else if (proj.type === 'thorn') {
         if (p.dmgCooldown <= 0 && rectOverlap(pbox, p)) {
-          p.takeDamage(proj.dmg);
-          p.dmgCooldown = 500;
-          proj.alive = false;
+          p.takeDamage(proj.dmg); p.dmgCooldown = 500; proj.alive = false;
+        } else if (this.player2 && this.player2.alive &&
+                   this.player2.dmgCooldown <= 0 && rectOverlap(pbox, this.player2)) {
+          this.player2.takeDamage(proj.dmg); this.player2.dmgCooldown = 500; proj.alive = false;
         }
       }
     }
@@ -435,8 +820,12 @@ class Game {
     // Night survived banner
     if (this.nightSurvivedBanner > 0) this.nightSurvivedBanner -= dt;
 
-    // Player dead?
-    if (!p.alive) this.state = 'GAME_OVER';
+    // Game over: solo → P1 downed; coop/bot → both downed simultaneously
+    if (this.menuMode === 'SOLO') {
+      if (p.downed) this.state = 'GAME_OVER';
+    } else {
+      if (p.downed && (!this.player2 || this.player2.downed)) this.state = 'GAME_OVER';
+    }
   }
 
   // ── Draw ──────────────────────────────────────────────────────────────────
@@ -444,7 +833,25 @@ class Game {
     const ctx = this.ctx;
     ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
-    if (this.state === 'MENU') { this.ui.drawMenu(ctx); return; }
+    // ── Online-only screens ──────────────────────────────────────────────
+    if (this.state === 'LOGIN') {
+      this.ui.drawLoginScreen(ctx, this._loginFields, this._loginMode, this._loginError);
+      return;
+    }
+    if (this.state === 'LOBBY_LIST') {
+      this.ui.drawLobbyListScreen(ctx, this._lobbyList, this._loginError);
+      return;
+    }
+    if (this.state === 'LOBBY_WAIT') {
+      this.ui.drawLobbyWaitScreen(ctx, this._lobbyPlayers, this._isHost);
+      return;
+    }
+    if (this.state === 'ONLINE') {
+      this._drawOnline(ctx);
+      return;
+    }
+
+    if (this.state === 'MENU') { this.ui.drawMenu(ctx, this.menuMode); return; }
     if (this.state === 'GAME_OVER') { this.ui.drawGameOver(ctx, this.nightNumber); return; }
     if (this.state === 'VICTORY')   { this.ui.drawVictory(ctx);   return; }
 
@@ -504,6 +911,13 @@ class Game {
       this.player.draw(ctx, s.x, s.y);
     }
 
+    // Player 2
+    if (this.player2) {
+      const s = cam.toScreen(this.player2.x, this.player2.y);
+      this.player2.draw(ctx, s.x, s.y);
+      if (!this.player2.downed) this.player2.drawHpBar(ctx, s.x, s.y);
+    }
+
     // HUD
     this.ui.drawHUD(ctx, this);
 
@@ -521,14 +935,126 @@ class Game {
     }
   }
 
+  // ── Online renderer ───────────────────────────────────────────────────────
+  _drawOnline(ctx) {
+    const s = this._onlineState;
+
+    // Victory / game over overlays
+    if (this._onlineVictory)  { this.ui.drawVictory(ctx); return; }
+    if (this._onlineGameOver) { this.ui.drawGameOver(ctx, s?.nightNumber ?? 0); return; }
+
+    if (!s) {
+      // Waiting for first tick
+      ctx.fillStyle = '#0a1a0a'; ctx.fillRect(0,0,CANVAS_W,CANVAS_H);
+      ctx.fillStyle='#fff'; ctx.font='14px monospace'; ctx.textAlign='center';
+      ctx.fillText('Connecting…', CANVAS_W/2, CANVAS_H/2);
+      return;
+    }
+
+    // Night tint
+    if (s.phase === 'night') { ctx.fillStyle='#000'; ctx.fillRect(0,0,CANVAS_W,CANVAS_H); }
+
+    // Find own player in tick to center camera on them
+    const me = s.players.find(p => p.username === Net.username) || s.players[0];
+    const camX = me ? clamp(me.x + me.w/2 - CANVAS_W/2, 0, MAP_COLS*TILE_SIZE - CANVAS_W) : 0;
+    const camY = me ? clamp(me.y + me.h/2 - CANVAS_H/2, 0, MAP_ROWS*TILE_SIZE - CANVAS_H) : 0;
+
+    // World (reuse existing map for local display — server already manages actual state)
+    this.map.draw(ctx, { x: camX, y: camY });
+
+    if (s.phase === 'night') { ctx.fillStyle='rgba(0,0,20,0.38)'; ctx.fillRect(0,0,CANVAS_W,CANVAS_H); }
+
+    // Projectiles
+    for (const proj of s.projectiles) {
+      const sx = proj.x - camX, sy = proj.y - camY;
+      ctx.fillStyle = proj.type==='arrow' ? '#d4a830' : '#44bb44';
+      ctx.fillRect(sx-proj.w/2, sy-proj.h/2, proj.w||10, proj.h||6);
+    }
+
+    // Kids
+    for (const k of s.kids) {
+      const sx=k.x-camX, sy=k.y-camY;
+      if (!k.rescued) {
+        ctx.fillStyle='#ff0'; ctx.font='bold 14px monospace'; ctx.textAlign='center';
+        ctx.fillText('!', sx+k.w/2, sy-4);
+      }
+      ctx.fillStyle = KID_COLORS[k.idx];
+      ctx.fillRect(sx, sy+8, k.w, k.h-8);
+      ctx.fillStyle='#ffcc99'; ctx.beginPath(); ctx.arc(sx+k.w/2,sy+6,7,0,Math.PI*2); ctx.fill();
+    }
+
+    // Enemies (simple colored rects by type)
+    const ENEMY_COLORS = { Goat:'#cccccc', Villager:'#884422', BipedalDeer:'#886644' };
+    for (const e of s.enemies) {
+      const sx=e.x-camX, sy=e.y-camY;
+      if (sx<-100||sx>CANVAS_W+100||sy<-100||sy>CANVAS_H+100) continue;
+      ctx.fillStyle = ENEMY_COLORS[e.type] || '#ff0000';
+      ctx.fillRect(sx, sy, e.w||28, e.h||28);
+      // HP bar
+      ctx.fillStyle='#500'; ctx.fillRect(sx,sy-7,e.w,4);
+      ctx.fillStyle='#0c0'; ctx.fillRect(sx,sy-7,(e.w||28)*(e.hp/e.maxHp),4);
+    }
+
+    // All players
+    const PLAYER_COLORS_CLIENT = ['#4488ff','#ff8844','#44cc44','#cc44cc'];
+    for (const p of s.players) {
+      const sx=p.x-camX, sy=p.y-camY;
+      if (p.downed) {
+        ctx.globalAlpha=0.65;
+        ctx.fillStyle=p.bodyColor||PLAYER_COLORS_CLIENT[p.playerIdx]||'#fff';
+        ctx.fillRect(sx-4, sy+p.h/2-2, p.h, 10);
+        ctx.fillStyle='#ffcc99'; ctx.beginPath(); ctx.arc(sx+p.h+2,sy+p.h/2+3,7,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle=Math.floor(Date.now()/400)%2===0?'#f00':'#f88';
+        ctx.font='bold 14px monospace'; ctx.textAlign='center';
+        ctx.fillText('+', sx+p.w/2, sy-4);
+        ctx.globalAlpha=1;
+      } else {
+        ctx.fillStyle=p.bodyColor||PLAYER_COLORS_CLIENT[p.playerIdx]||'#fff';
+        ctx.fillRect(sx, sy+6, p.w, p.h-6);
+        ctx.fillStyle='#ffcc99'; ctx.fillRect(sx+6,sy,12,10);
+      }
+      // Name tag
+      ctx.fillStyle='#fff'; ctx.font='9px monospace'; ctx.textAlign='center';
+      ctx.fillText(p.username, sx+p.w/2, sy-8);
+      // HP bar
+      if (!p.downed) {
+        ctx.fillStyle='#300'; ctx.fillRect(sx,sy-5,p.w,3);
+        ctx.fillStyle='#f00'; ctx.fillRect(sx,sy-5,p.w*(p.hp/p.maxHp),3);
+      }
+    }
+
+    // HUD — reuse existing drawHUD but substitute server data
+    const fakeGame = {
+      player:  me ? { hp:me.hp, maxHp:me.maxHp, res:me.res||{wood:0,stone:0,herb:0},
+                      arrows:me.arrows||0, weapon:me.weapon||'fist',
+                      hotbar:me.hotbar||[], slot:me.slot||0, items:me.items||{} } : this.player,
+      player2: null,
+      phase:   s.phase, nightNumber:s.nightNumber, phaseTimer:s.phaseTimer,
+      kidsRescued:s.kidsRescued, waveActive:s.waveActive, currentWave:s.currentWave,
+      nearCraftingTable:false,
+      announcementText: s.announcement||'', announcementTimer: s.announcement ? 1 : 0,
+      crafting: { feedbackTimer:0 },
+      menuMode: 'ONLINE',
+    };
+    this.ui.drawHUD(ctx, fakeGame);
+
+    // Server announcement
+    if (s.announcement) this.ui.drawOnlineAnnouncement(ctx, s.announcement);
+
+    // Esc hint
+    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,CANVAS_H-22,CANVAS_W,22);
+    ctx.fillStyle='#888'; ctx.font='10px monospace'; ctx.textAlign='center';
+    ctx.fillText('[Esc] Leave game   [Space] Attack   [E] Interact   [1-6] Hotbar', CANVAS_W/2, CANVAS_H-8);
+  }
+
   // ── Loop ──────────────────────────────────────────────────────────────────
   _loop(ts) {
     const dt = Math.min(ts - this._lastTs, 100); // cap at 100ms
     this._lastTs = ts;
 
-    if (this.state === 'PLAYING') this._update(dt);
-    // CRAFTING: partial update (crafting timers, no movement)
+    if (this.state === 'PLAYING')  this._update(dt);
     if (this.state === 'CRAFTING') this.crafting.update(dt);
+    if (this.state === 'ONLINE')   this._sendOnlineInput();
 
     this._draw();
     requestAnimationFrame(ts2 => this._loop(ts2));
@@ -536,4 +1062,23 @@ class Game {
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
+
+// Canvas field-click → focus for login screen
+document.getElementById('game').addEventListener('click', e => {
+  if (!game || game.state !== 'LOGIN') return;
+  const r  = game.canvas.getBoundingClientRect();
+  const mx = (e.clientX - r.left) * (CANVAS_W / r.width);
+  const my = (e.clientY - r.top)  * (CANVAS_H / r.height);
+  // Field rects: username [px+20, py+34, pw-40, 28], password [py+104]
+  const px = CANVAS_W/2-180, py = 138, pw = 360;
+  if (mx>=px+20&&mx<=px+pw-20&&my>=py+34&&my<=py+62) game._loginFields.focus='username';
+  else if (mx>=px+20&&mx<=px+pw-20&&my>=py+104&&my<=py+132) game._loginFields.focus='password';
+  else if (mx>=px+20&&mx<=px+pw-20&&my>=py+174&&my<=py+202) game._loginFields.focus='confirm';
+  // Toggle mode click area (bottom of panel)
+  if (mx>=px+20&&mx<=px+pw-20&&my>=py+238&&my<=py+256) {
+    game._loginMode = game._loginMode==='login'?'register':'login';
+    game._loginError='';
+  }
+});
+
 const game = new Game(document.getElementById('game'));

@@ -82,13 +82,20 @@ class TileMap {
     this.stumpTimers[this.idx(tx, ty)] = 2;
   }
 
-  onNightEnd() {
+  onNightEnd(player) {
+    const ptx = Math.floor((player.x + player.w / 2) / TILE_SIZE);
+    const pty = Math.floor((player.y + player.h / 2) / TILE_SIZE);
     for (const key of Object.keys(this.stumpTimers)) {
       this.stumpTimers[key]--;
       if (this.stumpTimers[key] <= 0) {
         const idx = parseInt(key);
         const tx = idx % this.cols;
         const ty = Math.floor(idx / this.cols);
+        // Don't regrow if player is standing on or adjacent to this tile
+        if (Math.abs(tx - ptx) <= 1 && Math.abs(ty - pty) <= 1) {
+          this.stumpTimers[key] = 1; // delay one more night
+          continue;
+        }
         this.tiles[idx] = T.TREE;
         delete this.stumpTimers[key];
       }

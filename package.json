@@ -1,0 +1,19 @@
+{
+  "name": "99-nights-in-the-forest",
+  "version": "1.0.0",
+  "description": "Online multiplayer survival game",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "ws": "^8.16.0"
+  }
+}

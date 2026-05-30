@@ -60,6 +60,13 @@ class CraftingSystem {
 
     if (map.get(tx, ty) !== T.GRASS) return false;
 
+    // Don't wall yourself in — block placement on tiles the player occupies
+    const ptx0 = Math.floor(player.x / TILE_SIZE);
+    const pty0 = Math.floor(player.y / TILE_SIZE);
+    const ptx1 = Math.floor((player.x + player.w - 1) / TILE_SIZE);
+    const pty1 = Math.floor((player.y + player.h - 1) / TILE_SIZE);
+    if (tx >= ptx0 && tx <= ptx1 && ty >= pty0 && ty <= pty1) return false;
+
     map.set(tx, ty, rec.tile);
     player.removeItem(id, 1);
     this.feedback = `Placed ${rec.name}`;
