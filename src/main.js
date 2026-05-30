@@ -3,15 +3,16 @@ class Game {
     this.canvas = canvas;
     this.ctx    = canvas.getContext('2d');
 
-    // Check for existing session → start at LOGIN if offline, skip to MENU after session restore
-    this.state  = 'LOGIN';
+    // Always open on the main menu; restore any saved session silently
+    this.state  = 'MENU';
+    Net.restoreSession();
 
     // Phase
     this.phase       = 'day';
     this.nightNumber = 0;
     this.phaseTimer  = DAY_DURATION;
 
-    // Mode: 'SOLO' | 'COOP' | 'BOT' | 'ONLINE'
+    // Mode: 'SOLO' | 'ONLINE'
     this.menuMode = 'SOLO';
 
     // ── Online state ──────────────────────────────────────────────────────
@@ -25,11 +26,6 @@ class Game {
     this._onlineState  = null; // last tick from server
     this._onlineGameOver = false;
     this._onlineVictory  = false;
-
-    // Try to restore session silently; if fails, stay at LOGIN
-    if (Net.restoreSession()) {
-      this.state = 'MENU';
-    }
 
     // Systems
     this.map      = new TileMap();
@@ -73,7 +69,7 @@ class Game {
   }
 
   _setupEvents() {
-    const MODES = ['SOLO', 'COOP', 'BOT', 'ONLINE'];
+    const MODES = ['SOLO', 'ONLINE'];
     window.addEventListener('keydown', e => {
       if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
       this.keys[e.code] = true;
@@ -133,9 +129,7 @@ class Game {
           this.menuMode = MODES[(i + 1) % MODES.length];
         }
         if (e.code === 'Digit1') this.menuMode = 'SOLO';
-        if (e.code === 'Digit2') this.menuMode = 'COOP';
-        if (e.code === 'Digit3') this.menuMode = 'BOT';
-        if (e.code === 'Digit4') this.menuMode = 'ONLINE';
+        if (e.code === 'Digit2') this.menuMode = 'ONLINE';
         if (e.code === 'Enter') {
           if (this.menuMode === 'ONLINE') { this._goToLobbyList(); return; }
           this._startGame(); return;
@@ -169,11 +163,6 @@ class Game {
         else if (this.state === 'CRAFTING') this.state = 'PLAYING';
       }
 
-      // P2 controls (COOP mode only)
-      if (this.menuMode === 'COOP' && this.player2 && this.state === 'PLAYING') {
-        if (e.code === 'Enter') this._doAttackP2();
-        if (e.code === 'ShiftRight') this._doInteractP2();
-      }
     });
 
     window.addEventListener('keyup', e => { this.keys[e.code] = false; });
@@ -237,19 +226,28 @@ class Game {
       try {
         await Net.register(f.username, f.password);
         this._loginError = '';
-        this.state = 'MENU';
+        this.state = 'LOBBY_LIST';
+        this._refreshLobbies();
       } catch(err) { this._loginError = err.message; }
     } else {
       try {
         await Net.login(f.username, f.password);
         this._loginError = '';
-        this.state = 'MENU';
+        this.state = 'LOBBY_LIST';
+        this._refreshLobbies();
       } catch(err) { this._loginError = err.message; }
     }
   }
 
   // ── Lobby management ──────────────────────────────────────────────────────
   async _goToLobbyList() {
+    if (!Net.token) {
+      // Not signed in yet — go to login, then come back here
+      this._loginMode  = 'login';
+      this._loginError = '';
+      this.state = 'LOGIN';
+      return;
+    }
     this.state = 'LOBBY_LIST';
     await this._refreshLobbies();
   }
@@ -333,24 +331,17 @@ class Game {
     Net.sendInput(keys, action);
   }
 
-  _makePlayer2() {
-    const p2 = new Player(PLAYER_START.tx + 2, PLAYER_START.ty);
-    p2.bodyColor = '#ff8844';
-    return p2;
-  }
-
   _startGame() {
     this.state       = 'PLAYING';
     this.phase       = 'day';
     this.nightNumber = 0;
     this.phaseTimer  = DAY_DURATION;
-    if (this.menuMode !== 'SOLO') this.player2 = this._makePlayer2();
   }
 
   _resetGame() {
     this.map      = new TileMap();
     this.player   = new Player(PLAYER_START.tx, PLAYER_START.ty);
-    this.player2  = this.menuMode !== 'SOLO' ? this._makePlayer2() : null;
+    this.player2  = null;
     this.crafting = new CraftingSystem(this.player);
     this.enemies  = [];
     this.projectiles = [];
@@ -613,99 +604,6 @@ class Game {
     }
   }
 
-  // ── P2 actions ────────────────────────────────────────────────────────────
-  _doAttackP2() {
-    const p2 = this.player2;
-    if (!p2 || !p2.alive) return;
-    const hb = p2.swing();
-    if (!hb) return;
-    for (const e of this.enemies) {
-      if (!e.alive || e._hitThisSwing) continue;
-      if (rectOverlap(hb, e)) {
-        e.takeDamage(hb.dmg);
-        e._hitThisSwing = true;
-        if (!e.alive && e instanceof BipedalDeer) this.deerDefeated = true;
-      }
-    }
-  }
-
-  _doInteractP2() {
-    const p2 = this.player2;
-    if (!p2 || p2.downed) return;
-
-    // Revive P1 if downed
-    if (this.player.downed && this._tryRevive(p2, this.player)) return;
-
-    // Gather from adjacent tiles
-    const pcx = Math.floor((p2.x + p2.w / 2) / TILE_SIZE);
-    const pcy = Math.floor((p2.y + p2.h / 2) / TILE_SIZE);
-    for (const { tx, ty } of [
-      { tx: pcx, ty: pcy - 1 }, { tx: pcx, ty: pcy + 1 },
-      { tx: pcx - 1, ty: pcy }, { tx: pcx + 1, ty: pcy }, { tx: pcx, ty: pcy }
-    ]) {
-      const tile = this.map.get(tx, ty);
-      if (tile === T.TREE) {
-        this.player.addRes('wood', 1); this.map.chopTree(tx, ty); return;
-      } else if (tile === T.ROCK) {
-        this.player.addRes('stone', 1); this.map.set(tx, ty, T.GRASS); return;
-      } else if (tile === T.HERB) {
-        this.player.addRes('herb', 1); this.map.set(tx, ty, T.GRASS); return;
-      }
-    }
-  }
-
-  // ── Bot AI ────────────────────────────────────────────────────────────────
-  _botMove(dt) {
-    const bot = this.player2;
-    if (bot.downed) return;
-    const p   = this.player;
-
-    // Revive P1 if downed and bot has a bandage
-    if (p.downed) {
-      const d = distance({ x: bot.x, y: bot.y }, { x: p.x, y: p.y });
-      if (d < TILE_SIZE * 2) {
-        this._tryRevive(bot, p);
-      } else {
-        bot.update(dt,
-          p.y < bot.y - 6, p.y > bot.y + 6,
-          p.x < bot.x - 6, p.x > bot.x + 6,
-          this.map);
-      }
-      return;
-    }
-
-    // Find nearest live enemy within aggro range
-    let target = null;
-    let bestDist = 260;
-    for (const e of this.enemies) {
-      if (!e.alive) continue;
-      const d = distance({ x: bot.x + bot.w / 2, y: bot.y + bot.h / 2 },
-                         { x: e.x  + e.w  / 2, y: e.y  + e.h  / 2 });
-      if (d < bestDist) { bestDist = d; target = e; }
-    }
-
-    let tx, ty;
-    if (target) {
-      tx = target.x + target.w / 2;
-      ty = target.y + target.h / 2;
-      // Attack when in melee range
-      if (bestDist < 38 && bot.atkCooldown <= 0) this._doAttackP2();
-    } else {
-      // Orbit slightly offset from P1 so they don't stack
-      tx = p.x + p.w / 2 + 36;
-      ty = p.y + p.h / 2;
-    }
-
-    const bx = bot.x + bot.w / 2, by = bot.y + bot.h / 2;
-    const ddx = tx - bx, ddy = ty - by;
-    const dist2 = Math.hypot(ddx, ddy);
-    const move  = dist2 > 18;
-    bot.update(dt,
-      move && ddy < -6, move && ddy > 6,
-      move && ddx < -6, move && ddx > 6,
-      this.map);
-  }
-
   // ── Update ────────────────────────────────────────────────────────────────
   _update(dt) {
     const p = this.player;
@@ -721,15 +619,6 @@ class Game {
     const k = this.keys;
     p.update(dt, k['KeyW'], k['KeyS'], k['KeyA'], k['KeyD'], this.map);
 
-    // Player 2 update
-    if (this.player2 && !this.player2.downed) {
-      if (this.menuMode === 'COOP') {
-        this.player2.update(dt,
-          k['ArrowUp'], k['ArrowDown'], k['ArrowLeft'], k['ArrowRight'], this.map);
-      } else if (this.menuMode === 'BOT') {
-        this._botMove(dt);
-      }
-    }
 
     // Proximity to crafting table (keep in sync with _doInteract range)
     const ctx2 = CRAFTING_TABLE_POS.tx * TILE_SIZE + TILE_SIZE / 2;
@@ -836,12 +725,8 @@ class Game {
     // Night survived banner
     if (this.nightSurvivedBanner > 0) this.nightSurvivedBanner -= dt;
 
-    // Game over: solo → P1 downed; coop/bot → both downed simultaneously
-    if (this.menuMode === 'SOLO') {
-      if (p.downed) this.state = 'GAME_OVER';
-    } else {
-      if (p.downed && (!this.player2 || this.player2.downed)) this.state = 'GAME_OVER';
-    }
+    // Game over
+    if (p.downed) this.state = 'GAME_OVER';
   }
 
   // ── Draw ──────────────────────────────────────────────────────────────────
@@ -925,13 +810,6 @@ class Game {
     {
       const s = cam.toScreen(this.player.x, this.player.y);
       this.player.draw(ctx, s.x, s.y);
-    }
-
-    // Player 2
-    if (this.player2) {
-      const s = cam.toScreen(this.player2.x, this.player2.y);
-      this.player2.draw(ctx, s.x, s.y);
-      if (!this.player2.downed) this.player2.drawHpBar(ctx, s.x, s.y);
     }
 
     // HUD

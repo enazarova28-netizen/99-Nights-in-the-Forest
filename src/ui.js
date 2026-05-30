@@ -26,35 +26,6 @@ class UI {
     ctx.textAlign = 'left';
     ctx.fillText(`HP  ${p.hp}/${p.maxHp}`, 14, 22);
 
-    // P2 HP bar (if exists)
-    if (game.player2) {
-      const p2    = game.player2;
-      const label = game.menuMode === 'BOT' ? 'BOT' : 'P2';
-      ctx.fillStyle = '#500';
-      ctx.fillRect(CANVAS_W - 150, 10, 140, 14);
-      ctx.fillStyle = p2.downed ? '#555' : '#ff8844';
-      ctx.fillRect(CANVAS_W - 150, 10, 140 * (p2.hp / p2.maxHp), 14);
-      ctx.strokeStyle = p2.downed ? '#ff2222' : '#888'; ctx.lineWidth = p2.downed ? 2 : 1;
-      ctx.strokeRect(CANVAS_W - 150, 10, 140, 14);
-      ctx.fillStyle = '#fff'; ctx.font = '10px monospace'; ctx.textAlign = 'right';
-      ctx.fillText(p2.downed ? `${label}  DOWNED` : `${label}  ${p2.hp}/${p2.maxHp}`, CANVAS_W - 12, 22);
-    }
-
-    // Downed banners
-    if (p.downed) {
-      const pulse = Math.floor(Date.now() / 500) % 2 === 0;
-      ctx.fillStyle = pulse ? 'rgba(200,0,0,0.75)' : 'rgba(200,0,0,0.5)';
-      ctx.fillRect(0, CANVAS_H / 2 - 36, CANVAS_W, 44);
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center';
-      ctx.fillText('YOU ARE DOWNED — partner: use a Bandage near you to revive!', CANVAS_W / 2, CANVAS_H / 2 - 8);
-    }
-    if (game.player2 && game.player2.downed && !p.downed) {
-      ctx.fillStyle = 'rgba(180,80,0,0.7)';
-      ctx.fillRect(0, CANVAS_H - 32, CANVAS_W, 28);
-      ctx.fillStyle = '#fff'; ctx.font = '13px monospace'; ctx.textAlign = 'center';
-      ctx.fillText(`${game.menuMode === 'BOT' ? 'Bot' : 'P2'} is DOWNED — walk up and press [E] with a Bandage to revive!`, CANVAS_W / 2, CANVAS_H - 13);
-    }
-
     // Night + phase
     const phaseLabel = game.phase === 'day' ? '☀ DAY' : '☾ NIGHT';
     const timeLeft   = Math.ceil(game.phaseTimer / 1000);
@@ -307,47 +278,44 @@ class UI {
     ctx.fillStyle = '#fff';
     ctx.font = '13px monospace';
     const controls = [
-      'WASD — Move   Space — Attack   E — Interact',
-      '1-6 — Hotbar   ESC — Close menu',
+      'WASD — Move    Space — Attack    E — Interact / Gather',
+      '1-6 — Hotbar    ESC — Open crafting table',
     ];
-    controls.forEach((line, i) => ctx.fillText(line, CANVAS_W / 2, 215 + i * 22));
+    controls.forEach((line, i) => ctx.fillText(line, CANVAS_W / 2, 212 + i * 22));
 
-    // Mode selection boxes
+    // Mode selection — two large boxes
     const modes = [
-      { id: 'SOLO',   label: 'SOLO',      sub: 'WASD only' },
-      { id: 'COOP',   label: 'CO-OP',     sub: 'WASD + Arrows' },
-      { id: 'BOT',    label: 'BOT BUDDY', sub: 'WASD + AI partner' },
-      { id: 'ONLINE', label: '🌐 ONLINE',  sub: 'Up to 4 players' },
+      { id: 'SOLO',   label: 'SINGLE PLAYER', sub: 'Play alone', key: '[1]' },
+      { id: 'ONLINE', label: 'MULTIPLAYER',    sub: 'Up to 4 players online', key: '[2]' },
     ];
-    const bw = 130, bh = 64, gap = 12;
-    const totalW = modes.length * bw + (modes.length - 1) * gap;
+    const bw = 220, bh = 80, gap = 24;
+    const totalW = modes.length * bw + gap;
     const startX = (CANVAS_W - totalW) / 2;
-    const by2 = 268;
+    const by2 = 260;
 
     modes.forEach((m, i) => {
       const bx = startX + i * (bw + gap);
       const sel = menuMode === m.id;
-      ctx.fillStyle = sel ? 'rgba(255,215,0,0.15)' : 'rgba(0,0,0,0.4)';
+      ctx.fillStyle = sel ? 'rgba(255,215,0,0.18)' : 'rgba(0,0,0,0.45)';
       ctx.fillRect(bx, by2, bw, bh);
       ctx.strokeStyle = sel ? '#ffd700' : '#555';
-      ctx.lineWidth = sel ? 2 : 1;
+      ctx.lineWidth = sel ? 2.5 : 1;
       ctx.strokeRect(bx, by2, bw, bh);
-      ctx.fillStyle = sel ? '#ffd700' : '#888';
-      ctx.font = `bold 13px monospace`;
+      ctx.fillStyle = sel ? '#ffd700' : '#aaa';
+      ctx.font = `bold 16px monospace`;
       ctx.textAlign = 'center';
-      ctx.fillText(m.label, bx + bw / 2, by2 + 26);
-      ctx.fillStyle = sel ? '#ccc' : '#555';
-      ctx.font = '10px monospace';
-      ctx.fillText(m.sub, bx + bw / 2, by2 + 46);
-      // Key hint
-      ctx.fillStyle = '#444'; ctx.font = '9px monospace';
-      ctx.fillText(`[${i+1}]`, bx + bw / 2, by2 + 60);
+      ctx.fillText(m.label, bx + bw / 2, by2 + 32);
+      ctx.fillStyle = sel ? '#ddd' : '#666';
+      ctx.font = '11px monospace';
+      ctx.fillText(m.sub, bx + bw / 2, by2 + 52);
+      ctx.fillStyle = '#555'; ctx.font = '10px monospace';
+      ctx.fillText(m.key, bx + bw / 2, by2 + 68);
     });
 
     ctx.fillStyle = '#aaa';
     ctx.font = '12px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('A/D or ← → to choose   1/2/3/4 quick select', CANVAS_W / 2, 352);
+    ctx.fillText('← → or 1/2 to choose', CANVAS_W / 2, 358);
 
     ctx.fillStyle = '#ffd700';
     ctx.font = 'bold 18px monospace';
