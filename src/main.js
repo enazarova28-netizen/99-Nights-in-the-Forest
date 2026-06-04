@@ -240,67 +240,100 @@ class Game {
   // Mobile/tablet touch support for D-pad and action buttons
   _setupTouchControls() {
     const canvas = this.canvas;
-    const padSize = 20;
-    const padX = 16, padY = canvas.height - 80;
-    const btnW = 44, btnH = 32;
-    const attackX = canvas.width - btnW - 8;
-    const attackY = canvas.height - btnH*2 - 8 - 8;
-    const interactX = canvas.width - btnW*2 - 8 - 8;
-    const interactY = canvas.height - btnH - 8;
-    const craftX = canvas.width - btnW - 8;
-    const craftY = canvas.height - btnH - 8;
 
-    const getTouchPos = (e) => {
+    // Touch tracking
+    let activeTouches = {};
+
+    const getTouchPos = (touch) => {
       const r = canvas.getBoundingClientRect();
+      const scaleX = CANVAS_W / r.width;
+      const scaleY = CANVAS_H / r.height;
       return {
-        x: (e.touches[0].clientX - r.left) * (CANVAS_W / r.width),
-        y: (e.touches[0].clientY - r.top) * (CANVAS_H / r.height),
+        x: (touch.clientX - r.left) * scaleX,
+        y: (touch.clientY - r.top) * scaleY,
       };
     };
 
-    canvas.addEventListener('touchstart', e => {
-      if (this.state !== 'PLAYING' && this.state !== 'ONLINE') return;
-      const pos = getTouchPos(e);
-      const mx = pos.x, my = pos.y;
+    const checkDPad = (mx, my) => {
+      const padSize = 20;
+      const padX = 16, padY = canvas.height - 80;
 
-      // D-pad buttons — use WASD keys for movement
       if (mx >= padX && mx <= padX+padSize*3 && my >= padY && my <= padY+padSize*3) {
+        // UP
         if (mx >= padX+padSize && mx <= padX+padSize*2 && my >= padY && my <= padY+padSize) {
-          this.keys['KeyW'] = true;  // UP = W
+          return 'UP';
         }
+        // DOWN
         if (mx >= padX+padSize && mx <= padX+padSize*2 && my >= padY+padSize*2 && my <= padY+padSize*3) {
-          this.keys['KeyS'] = true;  // DOWN = S
+          return 'DOWN';
         }
+        // LEFT
         if (mx >= padX && mx <= padX+padSize && my >= padY+padSize && my <= padY+padSize*2) {
-          this.keys['KeyA'] = true;  // LEFT = A
+          return 'LEFT';
         }
+        // RIGHT
         if (mx >= padX+padSize*2 && mx <= padX+padSize*3 && my >= padY+padSize && my <= padY+padSize*2) {
-          this.keys['KeyD'] = true;  // RIGHT = D
+          return 'RIGHT';
         }
       }
+      return null;
+    };
 
-      // Action buttons
-      if (mx >= attackX && mx <= attackX+btnW && my >= attackY && my <= attackY+btnH) {
-        if (this.state === 'PLAYING') this._doAttack();
-        else if (this.state === 'ONLINE') { this._pendingOnlineAction = 'attack'; this._sendOnlineInput(); }
+    const setKeyForDir = (dir, state) => {
+      if (dir === 'UP') this.keys['KeyW'] = state;
+      if (dir === 'DOWN') this.keys['KeyS'] = state;
+      if (dir === 'LEFT') this.keys['KeyA'] = state;
+      if (dir === 'RIGHT') this.keys['KeyD'] = state;
+    };
+
+    canvas.addEventListener('touchstart', e => {
+      e.preventDefault();
+      if (this.state !== 'PLAYING' && this.state !== 'ONLINE') return;
+
+      for (let i = 0; i < e.touches.length; i++) {
+        const touch = e.touches[i];
+        const pos = getTouchPos(touch);
+        const dir = checkDPad(pos.x, pos.y);
+
+        if (dir) {
+          activeTouches[touch.identifier] = dir;
+          setKeyForDir(dir, true);
+        }
       }
-      if (mx >= interactX && mx <= interactX+btnW && my >= interactY && my <= interactY+btnH) {
-        if (this.state === 'PLAYING') this._doInteract();
-        else if (this.state === 'ONLINE') { this._pendingOnlineAction = 'interact'; this._sendOnlineInput(); }
+    }, { passive: false });
+
+    canvas.addEventListener('touchmove', e => {
+      e.preventDefault();
+      if (this.state !== 'PLAYING' && this.state !== 'ONLINE') return;
+
+      // Clear old touches and recheck
+      Object.values(activeTouches).forEach(dir => setKeyForDir(dir, false));
+      activeTouches = {};
+
+      for (let i = 0; i < e.touches.length; i++) {
+        const touch = e.touches[i];
+        const pos = getTouchPos(touch);
+        const dir = checkDPad(pos.x, pos.y);
+
+        if (dir) {
+          activeTouches[touch.identifier] = dir;
+          setKeyForDir(dir, true);
+        }
       }
-      if (mx >= craftX && mx <= craftX+btnW && my >= craftY && my <= craftY+btnH) {
-        this.state = this.state === 'CRAFTING' ? 'PLAYING' : 'CRAFTING';
-      }
-    }, false);
+    }, { passive: false });
 
     canvas.addEventListener('touchend', e => {
-      if (this.state !== 'PLAYING' && this.state !== 'ONLINE') return;
-      // Release all movement keys on touch end
-      this.keys['KeyW'] = false;
-      this.keys['KeyS'] = false;
-      this.keys['KeyA'] = false;
-      this.keys['KeyD'] = false;
-    }, false);
+      e.preventDefault();
+
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const touch = e.changedTouches[i];
+        if (activeTouches[touch.identifier]) {
+          const dir = activeTouches[touch.identifier];
+          setKeyForDir(dir, false);
+          delete activeTouches[touch.identifier];
+        }
+      }
+    }, { passive: false });
   }
 
   // ── Login / Register handling ─────────────────────────────────────────────
