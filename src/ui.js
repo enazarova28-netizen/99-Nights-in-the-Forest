@@ -145,6 +145,75 @@ class UI {
     }
   }
 
+  drawMobileControls(ctx) {
+    // Mobile D-pad (bottom-left)
+    const padSize = 20;
+    const padX = 16, padY = CANVAS_H - 80;
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    ctx.fillRect(padX, padY, padSize*3, padSize*3);
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(padX, padY, padSize*3, padSize*3);
+
+    // Up/Down/Left/Right buttons
+    const dirs = [
+      { label: '↑', x: padX+padSize, y: padY, dx: 0, dy: -1 },
+      { label: '↓', x: padX+padSize, y: padY+padSize*2, dx: 0, dy: 1 },
+      { label: '←', x: padX, y: padY+padSize, dx: -1, dy: 0 },
+      { label: '→', x: padX+padSize*2, y: padY+padSize, dx: 1, dy: 0 },
+    ];
+    dirs.forEach(d => {
+      ctx.fillStyle = 'rgba(100,150,255,0.3)';
+      ctx.fillRect(d.x, d.y, padSize, padSize);
+      ctx.fillStyle = '#88ccff';
+      ctx.font = 'bold 14px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(d.label, d.x + padSize/2, d.y + padSize/2 + 5);
+    });
+
+    // Action buttons (bottom-right)
+    const btnW = 44, btnH = 32, gap = 8;
+    const attackX = CANVAS_W - btnW - 8;
+    const attackY = CANVAS_H - btnH*2 - gap - 8;
+    const interactX = CANVAS_W - btnW*2 - gap - 8;
+    const interactY = CANVAS_H - btnH - 8;
+    const craftX = CANVAS_W - btnW - 8;
+    const craftY = CANVAS_H - btnH - 8;
+
+    // Attack button
+    ctx.fillStyle = 'rgba(255,100,100,0.3)';
+    ctx.fillRect(attackX, attackY, btnW, btnH);
+    ctx.strokeStyle = '#ff6666';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(attackX, attackY, btnW, btnH);
+    ctx.fillStyle = '#ff8888';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('⚔', attackX + btnW/2, attackY + btnH/2 + 4);
+
+    // Interact button
+    ctx.fillStyle = 'rgba(100,200,100,0.3)';
+    ctx.fillRect(interactX, interactY, btnW, btnH);
+    ctx.strokeStyle = '#66cc66';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(interactX, interactY, btnW, btnH);
+    ctx.fillStyle = '#88dd88';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('E', interactX + btnW/2, interactY + btnH/2 + 4);
+
+    // Crafting button
+    ctx.fillStyle = 'rgba(200,150,100,0.3)';
+    ctx.fillRect(craftX, craftY, btnW, btnH);
+    ctx.strokeStyle = '#cc9966';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(craftX, craftY, btnW, btnH);
+    ctx.fillStyle = '#ddaa88';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('⚒', craftX + btnW/2, craftY + btnH/2 + 4);
+  }
+
   // ── Crafting menu ─────────────────────────────────────────────────────────
   drawCraftingMenu(ctx, crafting, player) {
     // Background

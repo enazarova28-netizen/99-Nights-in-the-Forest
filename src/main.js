@@ -902,6 +902,9 @@ class Game {
     // HUD
     this.ui.drawHUD(ctx, this);
 
+    // Mobile controls (tablet support)
+    this.ui.drawMobileControls(ctx);
+
     // Night survived banner
     if (this.nightSurvivedBanner > 0) {
       ctx.fillStyle = `rgba(170,170,255,${this.nightSurvivedBanner / 2000})`;
@@ -1022,6 +1025,9 @@ class Game {
       menuMode: 'ONLINE',
     };
     this.ui.drawHUD(ctx, fakeGame);
+
+    // Mobile controls (tablet support)
+    this.ui.drawMobileControls(ctx);
 
     // Server announcement
     if (s.announcement) this.ui.drawOnlineAnnouncement(ctx, s.announcement);
@@ -1178,9 +1184,51 @@ document.getElementById('game').addEventListener('click', e => {
     return;
   }
 
-  // ── PLAYING (hotbar clicks) ────────────────────────────────────────────
+  // ── PLAYING (hotbar + mobile controls) ─────────────────────────────────
   if (game.state === 'PLAYING') {
-    // Hotbar at bottom-center
+    // Mobile D-pad (bottom-left)
+    const padSize = 20;
+    const padX = 16, padY = CANVAS_H - 80;
+    const dirs = [
+      { label: '↑', x: padX+padSize, y: padY, key: 'ArrowUp' },
+      { label: '↓', x: padX+padSize, y: padY+padSize*2, key: 'ArrowDown' },
+      { label: '←', x: padX, y: padY+padSize, key: 'ArrowLeft' },
+      { label: '→', x: padX+padSize*2, y: padY+padSize, key: 'ArrowRight' },
+    ];
+    for (const d of dirs) {
+      if (mx >= d.x && mx <= d.x+padSize && my >= d.y && my <= d.y+padSize) {
+        game.keys[d.key] = true;
+      }
+    }
+
+    // Action buttons
+    const btnW = 44, btnH = 32, gap = 8;
+    const attackX = CANVAS_W - btnW - 8;
+    const attackY = CANVAS_H - btnH*2 - gap - 8;
+    const interactX = CANVAS_W - btnW*2 - gap - 8;
+    const interactY = CANVAS_H - btnH - 8;
+    const craftX = CANVAS_W - btnW - 8;
+    const craftY = CANVAS_H - btnH - 8;
+
+    // Attack button
+    if (mx >= attackX && mx <= attackX+btnW && my >= attackY && my <= attackY+btnH) {
+      game._doAttack();
+      return;
+    }
+
+    // Interact button
+    if (mx >= interactX && mx <= interactX+btnW && my >= interactY && my <= interactY+btnH) {
+      game._doInteract();
+      return;
+    }
+
+    // Crafting button
+    if (mx >= craftX && mx <= craftX+btnW && my >= craftY && my <= craftY+btnH) {
+      game.state = 'CRAFTING';
+      return;
+    }
+
+    // Hotbar clicks
     const hotbarY = CANVAS_H - 30;
     const hotbarX = CANVAS_W/2 - 90;
     for (let i = 0; i < 6; i++) {
@@ -1195,6 +1243,50 @@ document.getElementById('game').addEventListener('click', e => {
 
   // ── ONLINE (similar controls) ──────────────────────────────────────────
   if (game.state === 'ONLINE') {
+    // Mobile D-pad (bottom-left)
+    const padSize = 20;
+    const padX = 16, padY = CANVAS_H - 80;
+    const dirs = [
+      { label: '↑', x: padX+padSize, y: padY, keys: { ArrowUp: true } },
+      { label: '↓', x: padX+padSize, y: padY+padSize*2, keys: { ArrowDown: true } },
+      { label: '←', x: padX, y: padY+padSize, keys: { ArrowLeft: true } },
+      { label: '→', x: padX+padSize*2, y: padY+padSize, keys: { ArrowRight: true } },
+    ];
+    for (const d of dirs) {
+      if (mx >= d.x && mx <= d.x+padSize && my >= d.y && my <= d.y+padSize) {
+        game.keys = { ...game.keys, ...d.keys };
+      }
+    }
+
+    // Action buttons
+    const btnW = 44, btnH = 32, gap = 8;
+    const attackX = CANVAS_W - btnW - 8;
+    const attackY = CANVAS_H - btnH*2 - gap - 8;
+    const interactX = CANVAS_W - btnW*2 - gap - 8;
+    const interactY = CANVAS_H - btnH - 8;
+    const craftX = CANVAS_W - btnW - 8;
+    const craftY = CANVAS_H - btnH - 8;
+
+    // Attack button
+    if (mx >= attackX && mx <= attackX+btnW && my >= attackY && my <= attackY+btnH) {
+      game._pendingOnlineAction = 'attack';
+      game._sendOnlineInput();
+      return;
+    }
+
+    // Interact button
+    if (mx >= interactX && mx <= interactX+btnW && my >= interactY && my <= interactY+btnH) {
+      game._pendingOnlineAction = 'interact';
+      game._sendOnlineInput();
+      return;
+    }
+
+    // Crafting button
+    if (mx >= craftX && mx <= craftX+btnW && my >= craftY && my <= craftY+btnH) {
+      game.state = 'CRAFTING';
+      return;
+    }
+
     // Hotbar clicks
     const hotbarY = CANVAS_H - 30;
     const hotbarX = CANVAS_W/2 - 90;
