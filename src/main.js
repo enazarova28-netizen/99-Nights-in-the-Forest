@@ -63,6 +63,7 @@ class Game {
     // Keys
     this.keys = {};
     this._setupEvents();
+    this._setupTouchControls();
 
     this._lastTs = 0;
     requestAnimationFrame(ts => this._loop(ts));
@@ -181,7 +182,7 @@ class Game {
       const r  = this.canvas.getBoundingClientRect();
       const sx = (e.clientX - r.left) * (CANVAS_W / r.width);
       const sy = (e.clientY - r.top)  * (CANVAS_H / r.height);
-      this.ui.handleCraftingClick(sx, sy, this.crafting);
+      this.ui.handleCraftingClick(sx, sy, this.crafting, this);
     });
 
     // Hidden input listeners for tablet keyboard support
@@ -234,6 +235,68 @@ class Game {
         }
       });
     }
+  }
+
+  // Mobile/tablet touch support for D-pad and action buttons
+  _setupTouchControls() {
+    const canvas = this.canvas;
+    const padSize = 20;
+    const padX = 16, padY = canvas.height - 80;
+    const btnW = 44, btnH = 32;
+    const attackX = canvas.width - btnW - 8;
+    const attackY = canvas.height - btnH*2 - 8 - 8;
+    const interactX = canvas.width - btnW*2 - 8 - 8;
+    const interactY = canvas.height - btnH - 8;
+    const craftX = canvas.width - btnW - 8;
+    const craftY = canvas.height - btnH - 8;
+
+    const getTouchPos = (e) => {
+      const r = canvas.getBoundingClientRect();
+      return {
+        x: (e.touches[0].clientX - r.left) * (CANVAS_W / r.width),
+        y: (e.touches[0].clientY - r.top) * (CANVAS_H / r.height),
+      };
+    };
+
+    canvas.addEventListener('touchstart', e => {
+      if (this.state !== 'PLAYING' && this.state !== 'ONLINE') return;
+      const pos = getTouchPos(e);
+      const mx = pos.x, my = pos.y;
+
+      // D-pad buttons
+      if (mx >= padX && mx <= padX+padSize*3 && my >= padY && my <= padY+padSize*3) {
+        if (mx >= padX+padSize && mx <= padX+padSize*2 && my >= padY && my <= padY+padSize)
+          this.keys['ArrowUp'] = true;
+        if (mx >= padX+padSize && mx <= padX+padSize*2 && my >= padY+padSize*2 && my <= padY+padSize*3)
+          this.keys['ArrowDown'] = true;
+        if (mx >= padX && mx <= padX+padSize && my >= padY+padSize && my <= padY+padSize*2)
+          this.keys['ArrowLeft'] = true;
+        if (mx >= padX+padSize*2 && mx <= padX+padSize*3 && my >= padY+padSize && my <= padY+padSize*2)
+          this.keys['ArrowRight'] = true;
+      }
+
+      // Action buttons
+      if (mx >= attackX && mx <= attackX+btnW && my >= attackY && my <= attackY+btnH) {
+        if (this.state === 'PLAYING') this._doAttack();
+        else if (this.state === 'ONLINE') { this._pendingOnlineAction = 'attack'; this._sendOnlineInput(); }
+      }
+      if (mx >= interactX && mx <= interactX+btnW && my >= interactY && my <= interactY+btnH) {
+        if (this.state === 'PLAYING') this._doInteract();
+        else if (this.state === 'ONLINE') { this._pendingOnlineAction = 'interact'; this._sendOnlineInput(); }
+      }
+      if (mx >= craftX && mx <= craftX+btnW && my >= craftY && my <= craftY+btnH) {
+        this.state = this.state === 'CRAFTING' ? 'PLAYING' : 'CRAFTING';
+      }
+    }, false);
+
+    canvas.addEventListener('touchend', e => {
+      if (this.state !== 'PLAYING' && this.state !== 'ONLINE') return;
+      // Release all movement keys on touch end
+      this.keys['ArrowUp'] = false;
+      this.keys['ArrowDown'] = false;
+      this.keys['ArrowLeft'] = false;
+      this.keys['ArrowRight'] = false;
+    }, false);
   }
 
   // ── Login / Register handling ─────────────────────────────────────────────

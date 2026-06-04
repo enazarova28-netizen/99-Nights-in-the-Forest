@@ -235,6 +235,18 @@ class UI {
     ctx.font = '11px monospace';
     ctx.fillText('[ESC] close   click recipe to craft', CANVAS_W / 2, 98);
 
+    // Close button (top-right)
+    const closeX = CANVAS_W - 110, closeY = 68;
+    ctx.fillStyle = 'rgba(255,100,100,0.2)';
+    ctx.fillRect(closeX, closeY, 100, 24);
+    ctx.strokeStyle = '#ff6666';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(closeX, closeY, 100, 24);
+    ctx.fillStyle = '#ff8888';
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('[X] Close', closeX + 50, closeY + 16);
+
     // Recipe list
     const listX  = 120;
     const listY  = 110;
@@ -293,7 +305,14 @@ class UI {
     }
   }
 
-  handleCraftingClick(mx, my, crafting) {
+  handleCraftingClick(mx, my, crafting, game) {
+    // Close button
+    const closeX = CANVAS_W - 110, closeY = 68;
+    if (mx >= closeX && mx <= closeX + 100 && my >= closeY && my <= closeY + 24) {
+      game.state = 'PLAYING';
+      return;
+    }
+
     const listX = 120;
     const listY = 110;
     const rowH  = 42;
