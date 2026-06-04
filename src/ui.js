@@ -238,7 +238,7 @@ class UI {
   }
 
   // ── Menu / overlays ───────────────────────────────────────────────────────
-  drawMenu(ctx, menuMode = 'SOLO') {
+  drawMenu(ctx, menuMode = 'SOLO', onlineEnabled = true) {
     ctx.fillStyle = '#0a1a0a';
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
@@ -321,6 +321,12 @@ class UI {
     ctx.font = 'bold 18px monospace';
     const blink = Math.floor(Date.now() / 500) % 2 === 0;
     if (blink) ctx.fillText('Press ENTER to begin', CANVAS_W / 2, CANVAS_H - 50);
+
+    if (!onlineEnabled) {
+      ctx.fillStyle = '#ffdd88';
+      ctx.font = '12px monospace';
+      ctx.fillText('GitHub Pages supports local single-player only.', CANVAS_W / 2, CANVAS_H - 28);
+    }
 
     // ── Account panel (top-right) ──────────────────────────────────────────
     if (typeof Net !== 'undefined' && Net.username) {

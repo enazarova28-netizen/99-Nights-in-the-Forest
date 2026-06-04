@@ -21,7 +21,9 @@ const Net = {
     const res = await fetch(`${SERVER_URL}${path}`, {
       method: 'POST', headers, body: JSON.stringify(body)
     });
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = { error: `HTTP ${res.status}` }; }
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     return data;
   },
@@ -30,7 +32,9 @@ const Net = {
     const headers = {};
     if (auth && this.token) headers['Authorization'] = `Bearer ${this.token}`;
     const res = await fetch(`${SERVER_URL}${path}`, { headers });
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = { error: `HTTP ${res.status}` }; }
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     return data;
   },
@@ -39,7 +43,9 @@ const Net = {
     const headers = {};
     if (auth && this.token) headers['Authorization'] = `Bearer ${this.token}`;
     const res = await fetch(`${SERVER_URL}${path}`, { method: 'DELETE', headers });
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = { error: `HTTP ${res.status}` }; }
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     return data;
   },

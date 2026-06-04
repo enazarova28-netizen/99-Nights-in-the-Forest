@@ -133,9 +133,12 @@ class Game {
           this.menuMode = MODES[(i + 1) % MODES.length];
         }
         if (e.code === 'Digit1') this.menuMode = 'SOLO';
-        if (e.code === 'Digit2') this.menuMode = 'ONLINE';
+        if (e.code === 'Digit2') this.menuMode = this.onlineEnabled ? 'ONLINE' : 'SOLO';
         if (e.code === 'Enter') {
-          if (this.menuMode === 'ONLINE') { this._goToLobbyList(); return; }
+          if (this.menuMode === 'ONLINE') {
+            if (!this.onlineEnabled) { this.menuMode = 'SOLO'; return; }
+            this._goToLobbyList(); return;
+          }
           this._startGame(); return;
         }
         return;
@@ -203,6 +206,7 @@ class Game {
       return;
     }
 
+    if (e.code === 'Escape') { this.state = 'MENU'; this._loginError = ''; return; }
     if (e.code === 'Enter') { this._submitLogin(); return; }
 
     if (e.key === 'Backspace') {
@@ -755,11 +759,15 @@ class Game {
       return;
     }
 
-    if (this.state === 'MENU') { this.ui.drawMenu(ctx, this.menuMode); return; }
+    if (this.state === 'MENU') { this.ui.drawMenu(ctx, this.menuMode, this.onlineEnabled); return; }
     if (this.state === 'GAME_OVER') { this.ui.drawGameOver(ctx, this.nightNumber); return; }
     if (this.state === 'VICTORY')   { this.ui.drawVictory(ctx);   return; }
 
     const cam = this.camera;
+
+    // Base fill so canvas is never transparent
+    ctx.fillStyle = '#1a3a16';
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
     // Night tint
     if (this.phase === 'night') {
@@ -847,6 +855,10 @@ class Game {
       ctx.fillText('Connecting…', CANVAS_W/2, CANVAS_H/2);
       return;
     }
+
+    // Base fill so canvas is never transparent
+    ctx.fillStyle = '#1a3a16';
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
     // Night tint
     if (s.phase === 'night') { ctx.fillStyle='#000'; ctx.fillRect(0,0,CANVAS_W,CANVAS_H); }
@@ -949,41 +961,157 @@ class Game {
     const dt = Math.min(ts - this._lastTs, 100); // cap at 100ms
     this._lastTs = ts;
 
-    if (this.state === 'PLAYING')  this._update(dt);
-    if (this.state === 'CRAFTING') this.crafting.update(dt);
-    if (this.state === 'ONLINE')   this._sendOnlineInput();
-
-    this._draw();
+    try {
+      if (this.state === 'PLAYING')  this._update(dt);
+      if (this.state === 'CRAFTING') this.crafting.update(dt);
+      if (this.state === 'ONLINE')   this._sendOnlineInput();
+      this._draw();
+    } catch(err) {
+      console.error('[Game loop error]', err);
+    }
     requestAnimationFrame(ts2 => this._loop(ts2));
   }
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
-// Canvas field-click → focus for login screen
+// Canvas clicks — handle all interactive UI
 document.getElementById('game').addEventListener('click', e => {
-  if (!game || game.state !== 'LOGIN') return;
+  if (!game) return;
   const r  = game.canvas.getBoundingClientRect();
   const mx = (e.clientX - r.left) * (CANVAS_W / r.width);
   const my = (e.clientY - r.top)  * (CANVAS_H / r.height);
-  const px = CANVAS_W/2-190, py = 96, pw = 380;
-  const tabW = pw / 2;
-  const bodyY = py + 40;
 
-  // Tab button clicks (Sign In / Sign Up)
-  if (my >= py && my <= py+40) {
-    if (mx >= px && mx <= px+tabW) {
-      game._loginMode = 'login'; game._loginError = ''; game._loginFields.focus = 'username';
-    } else if (mx >= px+tabW && mx <= px+pw) {
-      game._loginMode = 'register'; game._loginError = ''; game._loginFields.focus = 'username';
+  // ── LOGIN ──────────────────────────────────────────────────────────────
+  if (game.state === 'LOGIN') {
+    const px = CANVAS_W/2-190, py = 96, pw = 380;
+    const tabW = pw / 2;
+    const bodyY = py + 40;
+
+    // Tab buttons
+    if (my >= py && my <= py+40) {
+      if (mx >= px && mx <= px+tabW) {
+        game._loginMode = 'login'; game._loginError = ''; game._loginFields.focus = 'username';
+      } else if (mx >= px+tabW && mx <= px+pw) {
+        game._loginMode = 'register'; game._loginError = ''; game._loginFields.focus = 'username';
+      }
+      return;
+    }
+
+    // Field clicks
+    if (mx>=px+20&&mx<=px+pw-20&&my>=bodyY+22&&my<=bodyY+50) game._loginFields.focus='username';
+    else if (mx>=px+20&&mx<=px+pw-20&&my>=bodyY+90&&my<=bodyY+118) game._loginFields.focus='password';
+    else if (mx>=px+20&&mx<=px+pw-20&&my>=bodyY+158&&my<=bodyY+186) game._loginFields.focus='confirm';
+    return;
+  }
+
+  // ── MENU ───────────────────────────────────────────────────────────────
+  if (game.state === 'MENU') {
+    // Account panel (top-right)
+    const apx = CANVAS_W - 178, apy = 8, apw = 170;
+    if (mx >= apx && mx <= apx + apw && my >= apy && my <= apy + 68) {
+      if (Net.username) {
+        Net.logout();
+        game.state = 'MENU';
+      } else {
+        game.state = 'LOGIN';
+      }
+      return;
+    }
+
+    const modes = [
+      { id: 'SOLO', label: 'SINGLE PLAYER' },
+      { id: 'ONLINE', label: 'MULTIPLAYER' },
+    ];
+    const bw = 220, bh = 80, gap = 24;
+    const totalW = modes.length * bw + gap;
+    const startX = (CANVAS_W - totalW) / 2;
+    const by = 260;
+
+    modes.forEach((m, i) => {
+      const bx = startX + i * (bw + gap);
+      if (mx >= bx && mx <= bx + bw && my >= by && my <= by + bh) {
+        game.menuMode = m.id;
+        if (m.id === 'SOLO') {
+          game.state = 'PLAYING';
+          game._startGame();
+        } else {
+          if (!Net.token) game.state = 'LOGIN';
+          else game._goToLobbyList();
+        }
+      }
+    });
+    return;
+  }
+
+  // ── LOBBY_LIST ────────────────────────────────────────────────────────
+  if (game.state === 'LOBBY_LIST') {
+    // Create button
+    const cbx = CANVAS_W/2 - 80, cby = 84;
+    if (mx >= cbx && mx <= cbx + 160 && my >= cby && my <= cby + 28) {
+      game._promptCreateLobby();
+      return;
+    }
+
+    // Lobby items
+    const startY = 128;
+    game._lobbyList.forEach((l, i) => {
+      if (l.playerCount < 4) {
+        const ry = startY + i * 52;
+        if (mx >= CANVAS_W/2-240 && mx <= CANVAS_W/2+240 && my >= ry && my <= ry + 44) {
+          game._joinLobby(l.id);
+        }
+      }
+    });
+    return;
+  }
+
+  // ── LOBBY_WAIT ────────────────────────────────────────────────────────
+  if (game.state === 'LOBBY_WAIT') {
+    if (game._isHost) {
+      // Start button (approximate hitbox)
+      if (mx >= CANVAS_W/2 - 150 && mx <= CANVAS_W/2 + 150 && my >= 295 && my <= 325) {
+        game._startOnlineGame();
+      }
     }
     return;
   }
 
-  // Field clicks: username [bodyY+22..bodyY+50], password [bodyY+90..bodyY+118], confirm [bodyY+158..bodyY+186]
-  if (mx>=px+20&&mx<=px+pw-20&&my>=bodyY+22&&my<=bodyY+50) game._loginFields.focus='username';
-  else if (mx>=px+20&&mx<=px+pw-20&&my>=bodyY+90&&my<=bodyY+118) game._loginFields.focus='password';
-  else if (mx>=px+20&&mx<=px+pw-20&&my>=bodyY+158&&my<=bodyY+186) game._loginFields.focus='confirm';
+  // ── CRAFTING ───────────────────────────────────────────────────────────
+  if (game.state === 'CRAFTING') {
+    game.ui.handleCraftingClick(mx, my, game.crafting);
+    return;
+  }
+
+  // ── PLAYING (hotbar clicks) ────────────────────────────────────────────
+  if (game.state === 'PLAYING') {
+    // Hotbar at bottom-center
+    const hotbarY = CANVAS_H - 30;
+    const hotbarX = CANVAS_W/2 - 90;
+    for (let i = 0; i < 6; i++) {
+      const x = hotbarX + i * 30;
+      if (mx >= x && mx <= x + 28 && my >= hotbarY - 8 && my <= hotbarY + 18) {
+        game._pendingAction = `hotbar:${i}`;
+        game._doInteract();
+      }
+    }
+    return;
+  }
+
+  // ── ONLINE (similar controls) ──────────────────────────────────────────
+  if (game.state === 'ONLINE') {
+    // Hotbar clicks
+    const hotbarY = CANVAS_H - 30;
+    const hotbarX = CANVAS_W/2 - 90;
+    for (let i = 0; i < 6; i++) {
+      const x = hotbarX + i * 30;
+      if (mx >= x && mx <= x + 28 && my >= hotbarY - 8 && my <= hotbarY + 18) {
+        game._pendingOnlineAction = `hotbar:${i}`;
+        game._sendOnlineInput();
+      }
+    }
+    return;
+  }
 });
 
 const game = new Game(document.getElementById('game'));
