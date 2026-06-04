@@ -263,16 +263,20 @@ class Game {
       const pos = getTouchPos(e);
       const mx = pos.x, my = pos.y;
 
-      // D-pad buttons
+      // D-pad buttons — use WASD keys for movement
       if (mx >= padX && mx <= padX+padSize*3 && my >= padY && my <= padY+padSize*3) {
-        if (mx >= padX+padSize && mx <= padX+padSize*2 && my >= padY && my <= padY+padSize)
-          this.keys['ArrowUp'] = true;
-        if (mx >= padX+padSize && mx <= padX+padSize*2 && my >= padY+padSize*2 && my <= padY+padSize*3)
-          this.keys['ArrowDown'] = true;
-        if (mx >= padX && mx <= padX+padSize && my >= padY+padSize && my <= padY+padSize*2)
-          this.keys['ArrowLeft'] = true;
-        if (mx >= padX+padSize*2 && mx <= padX+padSize*3 && my >= padY+padSize && my <= padY+padSize*2)
-          this.keys['ArrowRight'] = true;
+        if (mx >= padX+padSize && mx <= padX+padSize*2 && my >= padY && my <= padY+padSize) {
+          this.keys['KeyW'] = true;  // UP = W
+        }
+        if (mx >= padX+padSize && mx <= padX+padSize*2 && my >= padY+padSize*2 && my <= padY+padSize*3) {
+          this.keys['KeyS'] = true;  // DOWN = S
+        }
+        if (mx >= padX && mx <= padX+padSize && my >= padY+padSize && my <= padY+padSize*2) {
+          this.keys['KeyA'] = true;  // LEFT = A
+        }
+        if (mx >= padX+padSize*2 && mx <= padX+padSize*3 && my >= padY+padSize && my <= padY+padSize*2) {
+          this.keys['KeyD'] = true;  // RIGHT = D
+        }
       }
 
       // Action buttons
@@ -292,10 +296,10 @@ class Game {
     canvas.addEventListener('touchend', e => {
       if (this.state !== 'PLAYING' && this.state !== 'ONLINE') return;
       // Release all movement keys on touch end
-      this.keys['ArrowUp'] = false;
-      this.keys['ArrowDown'] = false;
-      this.keys['ArrowLeft'] = false;
-      this.keys['ArrowRight'] = false;
+      this.keys['KeyW'] = false;
+      this.keys['KeyS'] = false;
+      this.keys['KeyA'] = false;
+      this.keys['KeyD'] = false;
     }, false);
   }
 
