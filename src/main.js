@@ -119,8 +119,10 @@ class Game {
             this._loginFields = { username:'', password:'', confirm:'', focus:'username' };
             this._loginError  = '';
             this.state = 'LOGIN';
+            this._syncLoginInputs();
           } else {
             this.state = 'LOGIN';
+            this._syncLoginInputs();
           }
           return;
         }
@@ -181,6 +183,57 @@ class Game {
       const sy = (e.clientY - r.top)  * (CANVAS_H / r.height);
       this.ui.handleCraftingClick(sx, sy, this.crafting);
     });
+
+    // Hidden input listeners for tablet keyboard support
+    const hiddenUsername = document.getElementById('hiddenUsername');
+    const hiddenPassword = document.getElementById('hiddenPassword');
+    const hiddenConfirm  = document.getElementById('hiddenConfirm');
+
+    if (hiddenUsername) {
+      hiddenUsername.addEventListener('input', e => {
+        this._loginFields.username = e.target.value;
+        this._loginError = '';
+      });
+      hiddenUsername.addEventListener('keydown', e => {
+        if (e.code === 'Tab') {
+          e.preventDefault();
+          this._handleLoginKey(e);
+        } else if (e.code === 'Enter') {
+          e.preventDefault();
+          this._submitLogin();
+        }
+      });
+    }
+    if (hiddenPassword) {
+      hiddenPassword.addEventListener('input', e => {
+        this._loginFields.password = e.target.value;
+        this._loginError = '';
+      });
+      hiddenPassword.addEventListener('keydown', e => {
+        if (e.code === 'Tab') {
+          e.preventDefault();
+          this._handleLoginKey(e);
+        } else if (e.code === 'Enter') {
+          e.preventDefault();
+          this._submitLogin();
+        }
+      });
+    }
+    if (hiddenConfirm) {
+      hiddenConfirm.addEventListener('input', e => {
+        this._loginFields.confirm = e.target.value;
+        this._loginError = '';
+      });
+      hiddenConfirm.addEventListener('keydown', e => {
+        if (e.code === 'Tab') {
+          e.preventDefault();
+          this._handleLoginKey(e);
+        } else if (e.code === 'Enter') {
+          e.preventDefault();
+          this._submitLogin();
+        }
+      });
+    }
   }
 
   // ── Login / Register handling ─────────────────────────────────────────────
@@ -225,6 +278,27 @@ class Game {
     }
   }
 
+  _syncLoginInputs() {
+    // When switching tabs, clear and sync hidden inputs to show focused field
+    const hiddenUsername = document.getElementById('hiddenUsername');
+    const hiddenPassword = document.getElementById('hiddenPassword');
+    const hiddenConfirm  = document.getElementById('hiddenConfirm');
+    const f = this._loginFields;
+
+    if (hiddenUsername) {
+      hiddenUsername.value = '';
+      if (f.focus === 'username') hiddenUsername.focus();
+    }
+    if (hiddenPassword) {
+      hiddenPassword.value = '';
+      if (f.focus === 'password') hiddenPassword.focus();
+    }
+    if (hiddenConfirm) {
+      hiddenConfirm.value = '';
+      if (f.focus === 'confirm') hiddenConfirm.focus();
+    }
+  }
+
   async _submitLogin() {
     const f = this._loginFields;
     if (!f.username || !f.password) { this._loginError = 'Fill in all fields'; return; }
@@ -253,7 +327,9 @@ class Game {
       // Not signed in yet — go to login, then come back here
       this._loginMode  = 'login';
       this._loginError = '';
+      this._loginFields = { username:'', password:'', confirm:'', focus:'username' };
       this.state = 'LOGIN';
+      this._syncLoginInputs();
       return;
     }
     this.state = 'LOBBY_LIST';
@@ -992,16 +1068,27 @@ document.getElementById('game').addEventListener('click', e => {
     if (my >= py && my <= py+40) {
       if (mx >= px && mx <= px+tabW) {
         game._loginMode = 'login'; game._loginError = ''; game._loginFields.focus = 'username';
+        game._syncLoginInputs();
       } else if (mx >= px+tabW && mx <= px+pw) {
         game._loginMode = 'register'; game._loginError = ''; game._loginFields.focus = 'username';
+        game._syncLoginInputs();
       }
       return;
     }
 
-    // Field clicks
-    if (mx>=px+20&&mx<=px+pw-20&&my>=bodyY+22&&my<=bodyY+50) game._loginFields.focus='username';
-    else if (mx>=px+20&&mx<=px+pw-20&&my>=bodyY+90&&my<=bodyY+118) game._loginFields.focus='password';
-    else if (mx>=px+20&&mx<=px+pw-20&&my>=bodyY+158&&my<=bodyY+186) game._loginFields.focus='confirm';
+    // Field clicks — focus hidden input to trigger tablet keyboard
+    if (mx>=px+20&&mx<=px+pw-20&&my>=bodyY+22&&my<=bodyY+50) {
+      game._loginFields.focus='username';
+      document.getElementById('hiddenUsername').focus();
+    }
+    else if (mx>=px+20&&mx<=px+pw-20&&my>=bodyY+90&&my<=bodyY+118) {
+      game._loginFields.focus='password';
+      document.getElementById('hiddenPassword').focus();
+    }
+    else if (mx>=px+20&&mx<=px+pw-20&&my>=bodyY+158&&my<=bodyY+186) {
+      game._loginFields.focus='confirm';
+      document.getElementById('hiddenConfirm').focus();
+    }
     return;
   }
 

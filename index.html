@@ -8,6 +8,12 @@
 </head>
 <body>
   <canvas id="game" width="800" height="600"></canvas>
+
+  <!-- Hidden inputs for tablet keyboard support -->
+  <input type="text" id="hiddenUsername" style="position:fixed;left:-9999px;opacity:0;pointer-events:none;">
+  <input type="password" id="hiddenPassword" style="position:fixed;left:-9999px;opacity:0;pointer-events:none;">
+  <input type="password" id="hiddenConfirm" style="position:fixed;left:-9999px;opacity:0;pointer-events:none;">
+
   <script src="src/constants.js"></script>
   <script src="src/utils.js"></script>
   <script src="src/world.js"></script>
