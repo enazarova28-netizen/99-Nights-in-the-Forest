@@ -1061,6 +1061,7 @@ document.getElementById('game').addEventListener('click', e => {
   // ── LOGIN ──────────────────────────────────────────────────────────────
   if (game.state === 'LOGIN') {
     const px = CANVAS_W/2-190, py = 96, pw = 380;
+    const ph = game._loginMode === 'register' ? 300 : 260;
     const tabW = pw / 2;
     const bodyY = py + 40;
 
@@ -1073,6 +1074,13 @@ document.getElementById('game').addEventListener('click', e => {
         game._loginMode = 'register'; game._loginError = ''; game._loginFields.focus = 'username';
         game._syncLoginInputs();
       }
+      return;
+    }
+
+    // Submit button (for tablets)
+    const btnY = bodyY + ph - 40 - 30;
+    if (mx >= px+60 && mx <= px+pw-60 && my >= btnY && my <= btnY+24) {
+      game._submitLogin();
       return;
     }
 
