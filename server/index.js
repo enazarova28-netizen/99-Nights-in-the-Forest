@@ -47,7 +47,7 @@ wss.on('connection', (ws, req) => {
 
   // Create room on first connection (but don't start ticking yet)
   if (!lobby.roomState) {
-    lobby.roomState = new GameRoom(lobbyId, lobby.saveData ?? null);
+    lobby.roomState = new GameRoom(lobbyId, lobby.hostUsername, lobby.saveData ?? null);
 
     // Auto-save on each night end
     lobby.roomState.on('save', async (saveData) => {
@@ -110,13 +110,12 @@ wss.on('connection', (ws, req) => {
       // Save and tear down
       const saveData = room.toSaveData();
       room.stop();
-      // Persist save for everyone who was in the room
-      // (we only have the last set of players saved in saveData.players)
       for (const sp of saveData.players) {
         const dbUser = getUserByUsername(sp.username);
         if (dbUser) upsertSave(dbUser.id, saveData);
       }
-      console.log(`[room ${lobbyId}] empty — saved and stopped`);
+      lobbies.delete(lobbyId);
+      console.log(`[room ${lobbyId}] empty — saved, stopped, and removed`);
     }
   });
 

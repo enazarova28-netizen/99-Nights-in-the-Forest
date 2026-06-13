@@ -8,7 +8,7 @@ const T = {
   GRASS: 0, TREE: 1, ROCK: 2, STUMP: 3,
   CRAFTING_TABLE: 4, HERB: 5,
   WOOD_WALL: 6, STONE_WALL: 7, DOOR: 8,
-  CAMPFIRE: 9, TRAP: 10
+  CAMPFIRE: 9, TRAP: 10, FARM: 11
 };
 
 const TILE_SOLID = new Set([T.TREE, T.ROCK, T.WOOD_WALL, T.STONE_WALL]);
@@ -23,6 +23,7 @@ const RECIPES = [
   { id: 'door',       name: 'Wooden Door', cost: { wood: 4 },           type: 'placeable', tile: T.DOOR       },
   { id: 'campfire',   name: 'Campfire',    cost: { wood: 2, stone: 1 }, type: 'placeable', tile: T.CAMPFIRE   },
   { id: 'trap',       name: 'Trap',        cost: { wood: 2, herb: 1 },  type: 'placeable', tile: T.TRAP       },
+  { id: 'farm',       name: 'Farm',        cost: { wood: 3, herb: 2 },  type: 'placeable', tile: T.FARM       },
   { id: 'spear',      name: 'Spear',       cost: { wood: 2, stone: 1 }, type: 'weapon'  },
   { id: 'axe',        name: 'Stone Axe',   cost: { wood: 2, stone: 2 }, type: 'tool'    },
   { id: 'bow',        name: 'Bow',         cost: { wood: 3, herb: 2 },  type: 'weapon'  },

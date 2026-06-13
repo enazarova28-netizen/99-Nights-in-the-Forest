@@ -12,7 +12,7 @@ const T = {
   GRASS:0, TREE:1, ROCK:2, STUMP:3,
   CRAFTING_TABLE:4, HERB:5,
   WOOD_WALL:6, STONE_WALL:7, DOOR:8,
-  CAMPFIRE:9, TRAP:10
+  CAMPFIRE:9, TRAP:10, FARM:11
 };
 
 const TILE_SOLID = new Set([T.TREE, T.ROCK, T.WOOD_WALL, T.STONE_WALL]);
@@ -23,6 +23,7 @@ const RECIPES = [
   { id:'door',       name:'Door',        cost:{wood:4},           type:'placeable', tile:T.DOOR       },
   { id:'campfire',   name:'Campfire',    cost:{wood:2,stone:1},   type:'placeable', tile:T.CAMPFIRE   },
   { id:'trap',       name:'Trap',        cost:{wood:2,herb:1},    type:'placeable', tile:T.TRAP       },
+  { id:'farm',       name:'Farm',        cost:{wood:3,herb:2},    type:'placeable', tile:T.FARM       },
   { id:'spear',      name:'Spear',       cost:{wood:2,stone:1},   type:'weapon'   },
   { id:'axe',        name:'Stone Axe',   cost:{wood:2,stone:2},   type:'tool'     },
   { id:'bow',        name:'Bow',         cost:{wood:3,herb:2},    type:'weapon'   },
@@ -56,6 +57,8 @@ function uid() { return ++_uidCounter; }
 // ── Tile map ──────────────────────────────────────────────────────────────────
 class ServerTileMap {
   constructor(tilesBase64 = null) {
+    this.stumpTimers = {};
+    this.dirty = [];
     if (tilesBase64) {
       const buf = Buffer.from(tilesBase64, 'base64');
       this.tiles = new Uint8Array(buf);
@@ -63,7 +66,7 @@ class ServerTileMap {
       this.tiles = new Uint8Array(MAP_COLS * MAP_ROWS);
       this._generate();
     }
-    this.stumpTimers = {};
+    this.dirty = []; // clear any dirty entries from map generation
   }
 
   idx(tx, ty) { return ty * MAP_COLS + tx; }
@@ -75,7 +78,15 @@ class ServerTileMap {
 
   set(tx, ty, id) {
     if (tx < 0 || tx >= MAP_COLS || ty < 0 || ty >= MAP_ROWS) return;
-    this.tiles[this.idx(tx, ty)] = id;
+    const i = this.idx(tx, ty);
+    this.tiles[i] = id;
+    this.dirty.push({ i, tile: id });
+  }
+
+  flushDirty() {
+    const d = this.dirty;
+    this.dirty = [];
+    return d;
   }
 
   isSolid(tx, ty, isPlayer = false) {
@@ -89,12 +100,22 @@ class ServerTileMap {
     this.stumpTimers[this.idx(tx, ty)] = 3;
   }
 
-  onNightEnd() {
+  onNightEnd(players = []) {
     for (const [k, v] of Object.entries(this.stumpTimers)) {
       const nights = v - 1;
       if (nights <= 0) {
         const idx = parseInt(k);
+        const tx = idx % MAP_COLS;
+        const ty = Math.floor(idx / MAP_COLS);
+        // Don't regrow if any player is standing on or adjacent to this tile
+        const blocked = players.some(p => {
+          const ptx = Math.floor((p.x + p.w / 2) / TILE_SIZE);
+          const pty = Math.floor((p.y + p.h / 2) / TILE_SIZE);
+          return Math.abs(tx - ptx) <= 1 && Math.abs(ty - pty) <= 1;
+        });
+        if (blocked) { this.stumpTimers[k] = 1; continue; }
         this.tiles[idx] = T.TREE;
+        this.dirty.push({ i: idx, tile: T.TREE });
         delete this.stumpTimers[k];
       } else {
         this.stumpTimers[k] = nights;
@@ -311,24 +332,30 @@ class ServerPlayer {
       if (this.hitbox.timer <= 0) this.hitbox = null;
     }
 
-    // Unstuck from solid tiles
+    // Unstuck from solid tiles — multi-pass so pushing out of one tile doesn't
+    // leave the player inside an adjacent tile outside the original scan range.
     const ts = TILE_SIZE;
-    const x0 = Math.floor(this.x / ts);
-    const x1 = Math.floor((this.x + this.w - 1) / ts);
-    const y0 = Math.floor(this.y / ts);
-    const y1 = Math.floor((this.y + this.h - 1) / ts);
-    for (let ty2 = y0; ty2 <= y1; ty2++) {
-      for (let tx2 = x0; tx2 <= x1; tx2++) {
-        if (!map.isSolid(tx2, ty2, true)) continue;
-        const tl = tx2*ts, tt = ty2*ts;
-        const ol = (this.x+this.w)-tl, or2 = (tl+ts)-this.x;
-        const ot = (this.y+this.h)-tt, ob = (tt+ts)-this.y;
-        const m = Math.min(ol, or2, ot, ob);
-        if      (m===ol)  this.x = tl - this.w;
-        else if (m===or2) this.x = tl + ts;
-        else if (m===ot)  this.y = tt - this.h;
-        else              this.y = tt + ts;
+    for (let pass = 0; pass < 4; pass++) {
+      const x0 = Math.floor(this.x / ts);
+      const x1 = Math.floor((this.x + this.w - 1) / ts);
+      const y0 = Math.floor(this.y / ts);
+      const y1 = Math.floor((this.y + this.h - 1) / ts);
+      let anyOverlap = false;
+      for (let ty2 = y0; ty2 <= y1; ty2++) {
+        for (let tx2 = x0; tx2 <= x1; tx2++) {
+          if (!map.isSolid(tx2, ty2, true)) continue;
+          anyOverlap = true;
+          const tl = tx2*ts, tt = ty2*ts;
+          const ol = (this.x+this.w)-tl, or2 = (tl+ts)-this.x;
+          const ot = (this.y+this.h)-tt, ob = (tt+ts)-this.y;
+          const m = Math.min(ol, or2, ot, ob);
+          if      (m===ol)  this.x = tl - this.w;
+          else if (m===or2) this.x = tl + ts;
+          else if (m===ot)  this.y = tt - this.h;
+          else              this.y = tt + ts;
+        }
       }
+      if (!anyOverlap) break;
     }
   }
 
@@ -657,9 +684,10 @@ class BipedalDeer extends ServerEnemy {
 
 // ── Game Room ─────────────────────────────────────────────────────────────────
 class GameRoom {
-  constructor(lobbyId, saveData = null) {
-    this.lobbyId = lobbyId;
-    this.map     = new ServerTileMap(saveData?.tiles ?? null);
+  constructor(lobbyId, hostUsername = '', saveData = null) {
+    this.lobbyId     = lobbyId;
+    this.hostUsername = hostUsername;
+    this.map         = new ServerTileMap(saveData?.tiles ?? null);
     if (saveData?.stumpTimers) this.map.stumpTimers = saveData.stumpTimers;
 
     this.players     = [];
@@ -691,10 +719,13 @@ class GameRoom {
   addPlayer(username, ws) {
     if (this.players.length >= 4) return false;
     const idx = this.players.length;
-    // Restore inventory if they were in a previous save
     const saved = this._savedPlayerData.find(p => p.username === username);
     const sp = new ServerPlayer(username, idx, ws, saved ?? null);
     this.players.push(sp);
+    // Send authoritative map so client matches server layout
+    if (ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: 'map_init', tiles: this.map.toBase64() }));
+    }
     this._broadcastLobbyList();
     return true;
   }
@@ -974,11 +1005,20 @@ class GameRoom {
     this.phaseTimer = DAY_DURATION;
 
     this.enemies = this.enemies.filter(e => e instanceof BipedalDeer);
-    this.map.onNightEnd();
+    this.map.onNightEnd(this.players);
 
     // Heal living players
     for (const p of this.players) {
       if (!p.downed) p.hp = Math.min(p.maxHp, p.hp + 10);
+    }
+
+    // Farm harvest — +1 herb per farm tile, split among living players
+    const farmCount = this.map.tiles.filter(t => t === T.FARM).length;
+    if (farmCount > 0) {
+      const living = this.players.filter(p => !p.downed);
+      for (const p of living) p.addRes('herb', farmCount);
+      this.announcementText  = `Farm harvest: +${farmCount} Herb`;
+      this.announcementTimer = 2000;
     }
 
     // Auto-save
@@ -1051,6 +1091,7 @@ class GameRoom {
       waveActive:   this.waveActive,
       currentWave:  this.currentWave,
       announcement: this.announcementTimer > 0 ? this.announcementText : '',
+      tileDiffs:    this.map.flushDirty(),
     });
     for (const p of this.players) {
       if (p.ws.readyState === 1) p.ws.send(msg);
@@ -1059,8 +1100,9 @@ class GameRoom {
 
   _broadcastLobbyList() {
     const msg = JSON.stringify({
-      type:    'lobby_players',
-      players: this.players.map(p => ({ username:p.username, playerIdx:p.playerIdx, bodyColor:p.bodyColor })),
+      type:         'lobby_players',
+      hostUsername: this.hostUsername,
+      players:      this.players.map(p => ({ username:p.username, playerIdx:p.playerIdx, bodyColor:p.bodyColor })),
     });
     for (const p of this.players) {
       if (p.ws.readyState === 1) p.ws.send(msg);

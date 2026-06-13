@@ -78,13 +78,8 @@ class UI {
     // Context prompts at screen bottom
     ctx.font = '12px monospace';
     ctx.textAlign = 'center';
-    if (game.nearCraftingTable) {
-      ctx.fillStyle = '#ffffaa';
-      ctx.fillText('[E] Open Crafting Table', CANVAS_W / 2, CANVAS_H - 10);
-    } else {
-      ctx.fillStyle = '#88cc88';
-      ctx.fillText('[E] Gather / Rescue kid / Place item    [Space] Attack', CANVAS_W / 2, CANVAS_H - 10);
-    }
+    ctx.fillStyle = '#88cc88';
+    ctx.fillText('[E] Gather / Rescue kid / Place item    [Space] Attack', CANVAS_W / 2, CANVAS_H - 10);
 
     // Crafting feedback
     if (game.crafting.feedbackTimer > 0) {
@@ -146,9 +141,9 @@ class UI {
   }
 
   drawMobileControls(ctx) {
-    // Mobile D-pad (bottom-left)
+    // Mobile D-pad (bottom-left, higher up)
     const padSize = 20;
-    const padX = 16, padY = CANVAS_H - 80;
+    const padX = 16, padY = CANVAS_H - 170;
     ctx.fillStyle = 'rgba(255,255,255,0.15)';
     ctx.fillRect(padX, padY, padSize*3, padSize*3);
     ctx.strokeStyle = 'rgba(255,255,255,0.3)';
@@ -171,12 +166,12 @@ class UI {
       ctx.fillText(d.label, d.x + padSize/2, d.y + padSize/2 + 5);
     });
 
-    // Action buttons (bottom-right)
+    // Action buttons (bottom-right, higher up)
     const btnW = 44, btnH = 32, gap = 8;
     const attackX = CANVAS_W - btnW - 8;
-    const attackY = CANVAS_H - btnH*2 - gap - 8;
+    const attackY = CANVAS_H - btnH*3 - gap*2 - 8;
     const interactX = CANVAS_W - btnW*2 - gap - 8;
-    const interactY = CANVAS_H - btnH - 8;
+    const interactY = CANVAS_H - btnH*2 - gap - 8;
     const craftX = CANVAS_W - btnW - 8;
     const craftY = CANVAS_H - btnH - 8;
 
@@ -306,10 +301,12 @@ class UI {
   }
 
   handleCraftingClick(mx, my, crafting, game) {
+    const isOnline = game.menuMode === 'ONLINE';
+
     // Close button
     const closeX = CANVAS_W - 110, closeY = 68;
     if (mx >= closeX && mx <= closeX + 100 && my >= closeY && my <= closeY + 24) {
-      game.state = 'PLAYING';
+      game.state = isOnline ? 'ONLINE' : 'PLAYING';
       return;
     }
 
@@ -320,7 +317,11 @@ class UI {
       const y = listY + i * rowH;
       if (mx >= listX && mx <= CANVAS_W - 120 && my >= y && my <= y + rowH - 3) {
         this.selectedRecIdx = i;
-        crafting.craft(rec.id);
+        if (isOnline) {
+          Net.sendInput({}, `craft:${rec.id}`);
+        } else {
+          crafting.craft(rec.id);
+        }
       }
     });
   }
@@ -636,6 +637,7 @@ class UI {
     }
     ctx.fillStyle = '#555'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
     ctx.fillText('[R] Refresh   [Esc] Back to local menu   [Q] Logout', CANVAS_W/2, CANVAS_H - 16);
+
   }
 
   // ── Lobby wait / pre-game room ────────────────────────────────────────────

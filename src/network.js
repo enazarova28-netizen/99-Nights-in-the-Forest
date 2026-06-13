@@ -114,7 +114,7 @@ const Net = {
   },
 
   // ── WebSocket ──────────────────────────────────────────────────────────────
-  connect(lobbyId, { onTick, onLobbyPlayers, onVictory, onGameOver, onDisconnect }) {
+  connect(lobbyId, { onTick, onMapInit, onLobbyPlayers, onVictory, onGameOver, onDisconnect }) {
     const wsUrl = SERVER_URL.replace(/^http/, 'ws');
     this.ws = new WebSocket(`${wsUrl}/game?token=${this.token}&lobby=${lobbyId}`);
 
@@ -127,7 +127,8 @@ const Net = {
       let msg;
       try { msg = JSON.parse(e.data); } catch { return; }
       if      (msg.type === 'tick')          { this.latestState = msg; if (onTick)         onTick(msg); }
-      else if (msg.type === 'lobby_players') { if (onLobbyPlayers) onLobbyPlayers(msg.players); }
+      else if (msg.type === 'map_init')      { if (onMapInit)      onMapInit(msg.tiles); }
+      else if (msg.type === 'lobby_players') { if (onLobbyPlayers) onLobbyPlayers(msg.players, msg.hostUsername); }
       else if (msg.type === 'victory')       { if (onVictory)      onVictory(msg); }
       else if (msg.type === 'game_over')     { if (onGameOver)     onGameOver(msg); }
     };

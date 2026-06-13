@@ -255,6 +255,22 @@ class TileMap {
         ctx.stroke();
         break;
 
+      case T.FARM:
+        ctx.fillStyle = '#4a3a1a';
+        ctx.fillRect(x, y, s, s);
+        ctx.fillStyle = '#6b5a2a';
+        for (let row = 0; row < 3; row++) {
+          ctx.fillRect(x + 3, y + 4 + row * 9, s - 6, 4);
+        }
+        ctx.fillStyle = '#5db83a';
+        ctx.fillRect(x + 7,  y + 3,  3, 6);
+        ctx.fillRect(x + 14, y + 3,  3, 6);
+        ctx.fillRect(x + 21, y + 3,  3, 6);
+        ctx.fillRect(x + 7,  y + 12, 3, 6);
+        ctx.fillRect(x + 14, y + 12, 3, 6);
+        ctx.fillRect(x + 21, y + 12, 3, 6);
+        break;
+
       default:
         ctx.fillStyle = '#2d5a27';
         ctx.fillRect(x, y, s, s);

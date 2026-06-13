@@ -14,6 +14,20 @@
   <input type="password" id="hiddenPassword" style="position:fixed;left:-9999px;opacity:0;pointer-events:none;">
   <input type="password" id="hiddenConfirm" style="position:fixed;left:-9999px;opacity:0;pointer-events:none;">
 
+  <!-- Lobby name modal -->
+  <div id="lobbyModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:10;justify-content:center;align-items:center;">
+    <div style="background:#1a2a1a;border:2px solid #ffd700;padding:24px 32px;min-width:300px;font-family:monospace;text-align:center;">
+      <div style="color:#ffd700;font-size:15px;font-weight:bold;margin-bottom:14px;">Enter Lobby Name</div>
+      <input id="lobbyNameInput" type="text" maxlength="32" placeholder="Lobby name…"
+        style="width:100%;padding:8px;background:#0a1a0a;color:#fff;border:1px solid #aaffaa;font-family:monospace;font-size:14px;outline:none;">
+      <div id="lobbyModalError" style="color:#ff6666;font-size:12px;margin-top:10px;min-height:16px;"></div>
+      <div style="margin-top:10px;display:flex;gap:10px;justify-content:center;">
+        <button id="lobbyConfirmBtn" style="padding:7px 22px;background:#ffd700;color:#000;border:none;font-family:monospace;font-size:13px;font-weight:bold;cursor:pointer;">OK</button>
+        <button id="lobbyCancelBtn" style="padding:7px 22px;background:#333;color:#aaa;border:1px solid #555;font-family:monospace;font-size:13px;cursor:pointer;">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <script src="src/constants.js"></script>
   <script src="src/utils.js"></script>
   <script src="src/world.js"></script>

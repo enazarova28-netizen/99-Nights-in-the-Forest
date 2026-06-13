@@ -20,7 +20,7 @@ class Game {
     this._loginMode    = 'login'; // 'login' | 'register'
     this._loginError   = '';
     this._lobbyList    = [];
-    this._lobbyPlayers = []; // connected players in waiting room
+    this._lobbyPlayers = [];
     this._currentLobbyId = null;
     this._isHost       = false;
     this._onlineState  = null; // last tick from server
@@ -86,7 +86,6 @@ class Game {
         if (e.code === 'KeyR')   { this._refreshLobbies(); return; }
         if (e.code === 'KeyQ')   { Net.logout(); this.state = 'LOGIN'; this._loginFields = {username:'',password:'',confirm:'',focus:'username'}; return; }
         if (e.code === 'KeyC')   { this._promptCreateLobby(); return; }
-        // 1-9 join a lobby
         const digit = parseInt(e.key);
         if (!isNaN(digit) && digit >= 1 && digit <= this._lobbyList.length) {
           this._joinLobby(this._lobbyList[digit-1].id); return;
@@ -104,6 +103,7 @@ class Game {
       // ── ONLINE PLAYING ───────────────────────────────────────────────────
       if (this.state === 'ONLINE') {
         if (e.code === 'Escape') { this._leaveLobby(); return; }
+        if (e.code === 'Tab')   { e.preventDefault(); this.state = 'CRAFTING'; return; }
         if (e.code === 'Space') { this._pendingOnlineAction = 'attack'; return; }
         if (e.code === 'KeyE')  { this._pendingOnlineAction = 'interact'; return; }
         for (let i = 1; i <= 6; i++) {
@@ -150,7 +150,7 @@ class Game {
       if ((this.state === 'GAME_OVER' || this.state === 'VICTORY') && e.code === 'Enter') {
         this._resetGame(); return;
       }
-      if (e.code === 'Escape' && this.state === 'CRAFTING') { this.state = 'PLAYING'; return; }
+      if (e.code === 'Escape' && this.state === 'CRAFTING') { this.state = this.menuMode === 'ONLINE' ? 'ONLINE' : 'PLAYING'; return; }
 
       if (this.state !== 'PLAYING' && this.state !== 'CRAFTING') return;
 
@@ -248,6 +248,18 @@ class Game {
           e.preventDefault();
           this._submitLogin();
         }
+      });
+    }
+
+    const lobbyNameInput   = document.getElementById('lobbyNameInput');
+    const lobbyConfirmBtn  = document.getElementById('lobbyConfirmBtn');
+    const lobbyCancelBtn   = document.getElementById('lobbyCancelBtn');
+    if (lobbyConfirmBtn)  lobbyConfirmBtn.addEventListener('click', () => this._submitCreateLobby());
+    if (lobbyCancelBtn)   lobbyCancelBtn.addEventListener('click',  () => this._cancelCreateLobby());
+    if (lobbyNameInput) {
+      lobbyNameInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter')  { e.preventDefault(); this._submitCreateLobby(); }
+        if (e.key === 'Escape') { e.preventDefault(); this._cancelCreateLobby(); }
       });
     }
   }
@@ -364,17 +376,39 @@ class Game {
     catch(e) { this._loginError = 'Could not reach server'; }
   }
 
-  async _promptCreateLobby() {
-    const name = prompt('Lobby name (max 32 chars):');
-    if (!name) return;
+  _promptCreateLobby() {
+    const modal = document.getElementById('lobbyModal');
+    const input = document.getElementById('lobbyNameInput');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    if (input) { input.value = ''; input.focus(); }
+  }
+
+  _cancelCreateLobby() {
+    const modal = document.getElementById('lobbyModal');
+    if (modal) modal.style.display = 'none';
+  }
+
+  async _submitCreateLobby() {
+    const input    = document.getElementById('lobbyNameInput');
+    const errEl    = document.getElementById('lobbyModalError');
+    const name     = input ? input.value.trim() : '';
+    if (!name) {
+      if (errEl) errEl.textContent = 'Please enter a lobby name.';
+      return;
+    }
+    if (errEl) errEl.textContent = 'Creating…';
     try {
       const id = await Net.createLobby(name);
+      this._cancelCreateLobby();
       this._isHost = true;
       this._currentLobbyId = id;
       this._lobbyPlayers   = [];
       this.state = 'LOBBY_WAIT';
       this._connectWS(id);
-    } catch(e) { this._loginError = e.message; }
+    } catch(e) {
+      if (errEl) errEl.textContent = e.message || 'Failed to create lobby.';
+    }
   }
 
   async _joinLobby(lobbyId) {
@@ -390,9 +424,19 @@ class Game {
 
   _connectWS(lobbyId) {
     Net.connect(lobbyId, {
-      onLobbyPlayers: players => { this._lobbyPlayers = players; },
+      onMapInit: tilesB64 => {
+        const bin = atob(tilesB64);
+        for (let i = 0; i < bin.length; i++) this.map.tiles[i] = bin.charCodeAt(i);
+      },
+      onLobbyPlayers: (players, hostUsername) => {
+        this._lobbyPlayers = players;
+        this._isHost = (Net.username === hostUsername);
+      },
       onTick: state => {
         this._onlineState = state;
+        if (state.tileDiffs && state.tileDiffs.length) {
+          for (const { i, tile } of state.tileDiffs) this.map.tiles[i] = tile;
+        }
         if (this.state === 'LOBBY_WAIT') this.state = 'ONLINE';
       },
       onVictory:  () => { this._onlineVictory = true; },
@@ -506,6 +550,17 @@ class Game {
       this.player2.hp = Math.min(this.player2.maxHp, this.player2.hp + 10);
     this.nightSurvivedBanner = 2000;
     this.map.onNightEnd(this.player);
+
+    // Farm harvest — +1 herb per farm tile
+    let farmCount = 0;
+    for (let i = 0; i < this.map.tiles.length; i++) {
+      if (this.map.tiles[i] === T.FARM) farmCount++;
+    }
+    if (farmCount > 0) {
+      this.player.addRes('herb', farmCount);
+      this.announcementText  = `Farm harvest: +${farmCount} Herb`;
+      this.announcementTimer = 2000;
+    }
 
     if (this.nightNumber >= TOTAL_NIGHTS) {
       if (this.kidsRescued >= 4) {
@@ -640,16 +695,7 @@ class Game {
     // Priority 0: revive downed P2
     if (this.player2 && this.player2.downed && this._tryRevive(p, this.player2)) return;
 
-    // Priority 1: crafting table — generous 4-tile range
-    const ctx = CRAFTING_TABLE_POS.tx * TILE_SIZE + TILE_SIZE / 2;
-    const cty = CRAFTING_TABLE_POS.ty * TILE_SIZE + TILE_SIZE / 2;
-    const pdx = p.x + p.w / 2;
-    const pdy = p.y + p.h / 2;
-    if (distance({ x: pdx, y: pdy }, { x: ctx, y: cty }) < TILE_SIZE * 4) {
-      this.state = 'CRAFTING'; return;
-    }
-
-    // Priority 2: rescue kid
+    // Priority 1: rescue kid
     for (const kid of this.kids) {
       if (!kid.rescued && distance({ x: p.x, y: p.y }, kid) < TILE_SIZE * 2) {
         kid.rescued = true;
@@ -661,7 +707,7 @@ class Game {
       }
     }
 
-    // Priority 3: place item
+    // Priority 2: place item
     const selId = p.selectedItem();
     if (selId) {
       const rec = RECIPES.find(r => r.id === selId && r.type === 'placeable');
@@ -670,7 +716,7 @@ class Game {
       }
     }
 
-    // Priority 4: gather — scan facing tile + all 4 cardinal neighbours
+    // Priority 3: gather — scan facing tile + all 4 cardinal neighbours
     const pcx = Math.floor((p.x + p.w / 2) / TILE_SIZE);
     const pcy = Math.floor((p.y + p.h / 2) / TILE_SIZE);
     // Facing tile first, then cardinal tiles so nearest always wins
@@ -707,6 +753,15 @@ class Game {
         this.crafting.feedbackTimer = 1400;
         return;
       }
+    }
+
+    // Priority 4: crafting table — open if nearby and nothing else to do
+    const ctx = CRAFTING_TABLE_POS.tx * TILE_SIZE + TILE_SIZE / 2;
+    const cty = CRAFTING_TABLE_POS.ty * TILE_SIZE + TILE_SIZE / 2;
+    const pdx = p.x + p.w / 2;
+    const pdy = p.y + p.h / 2;
+    if (distance({ x: pdx, y: pdy }, { x: ctx, y: cty }) < TILE_SIZE * 4) {
+      this.state = 'CRAFTING';
     }
   }
 
@@ -1203,15 +1258,15 @@ document.getElementById('game').addEventListener('click', e => {
 
   // ── CRAFTING ───────────────────────────────────────────────────────────
   if (game.state === 'CRAFTING') {
-    game.ui.handleCraftingClick(mx, my, game.crafting);
+    game.ui.handleCraftingClick(mx, my, game.crafting, game);
     return;
   }
 
   // ── PLAYING (hotbar + mobile controls) ─────────────────────────────────
   if (game.state === 'PLAYING') {
-    // Mobile D-pad (bottom-left)
+    // Mobile D-pad (bottom-left, higher up)
     const padSize = 20;
-    const padX = 16, padY = CANVAS_H - 80;
+    const padX = 16, padY = CANVAS_H - 170;
     const dirs = [
       { label: '↑', x: padX+padSize, y: padY, key: 'KeyW' },
       { label: '↓', x: padX+padSize, y: padY+padSize*2, key: 'KeyS' },
@@ -1226,12 +1281,12 @@ document.getElementById('game').addEventListener('click', e => {
       }
     }
 
-    // Action buttons
+    // Action buttons (higher up)
     const btnW = 44, btnH = 32, gap = 8;
     const attackX = CANVAS_W - btnW - 8;
-    const attackY = CANVAS_H - btnH*2 - gap - 8;
+    const attackY = CANVAS_H - btnH*3 - gap*2 - 8;
     const interactX = CANVAS_W - btnW*2 - gap - 8;
-    const interactY = CANVAS_H - btnH - 8;
+    const interactY = CANVAS_H - btnH*2 - gap - 8;
     const craftX = CANVAS_W - btnW - 8;
     const craftY = CANVAS_H - btnH - 8;
 
@@ -1283,12 +1338,12 @@ document.getElementById('game').addEventListener('click', e => {
       }
     }
 
-    // Action buttons
+    // Action buttons (must match drawMobileControls positions)
     const btnW = 44, btnH = 32, gap = 8;
     const attackX = CANVAS_W - btnW - 8;
-    const attackY = CANVAS_H - btnH*2 - gap - 8;
+    const attackY = CANVAS_H - btnH*3 - gap*2 - 8;
     const interactX = CANVAS_W - btnW*2 - gap - 8;
-    const interactY = CANVAS_H - btnH - 8;
+    const interactY = CANVAS_H - btnH*2 - gap - 8;
     const craftX = CANVAS_W - btnW - 8;
     const craftY = CANVAS_H - btnH - 8;
 
