@@ -210,120 +210,156 @@ class UI {
   }
 
   // ── Crafting menu ─────────────────────────────────────────────────────────
+  _craftCanAfford(rec, player) {
+    return Object.entries(rec.cost).every(([res, cnt]) => (player.res[res] || 0) >= cnt);
+  }
+
   drawCraftingMenu(ctx, crafting, player) {
-    // Background
+    // Dim background
     ctx.fillStyle = 'rgba(0,0,0,0.85)';
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
-    ctx.fillStyle = '#8b4513';
-    ctx.fillRect(100, 50, CANVAS_W - 200, CANVAS_H - 100);
-    ctx.strokeStyle = '#ffd700';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(100, 50, CANVAS_W - 200, CANVAS_H - 100);
+    // Panel
+    const PX = 90, PY = 45, PW = CANVAS_W - 180, PH = CANVAS_H - 90;
+    ctx.fillStyle = '#6b3a10';
+    ctx.fillRect(PX, PY, PW, PH);
+    ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2;
+    ctx.strokeRect(PX, PY, PW, PH);
 
-    ctx.fillStyle = '#ffd700';
-    ctx.font = 'bold 20px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('⚒  CRAFTING TABLE  ⚒', CANVAS_W / 2, 82);
+    // Title bar
+    ctx.fillStyle = '#4a2808';
+    ctx.fillRect(PX, PY, PW, 36);
+    ctx.fillStyle = '#ffd700'; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('⚒  CRAFTING TABLE  ⚒', CANVAS_W / 2, PY + 23);
 
-    ctx.fillStyle = '#aaa';
-    ctx.font = '11px monospace';
-    ctx.fillText('[ESC] close   click recipe to craft', CANVAS_W / 2, 98);
+    // Close button
+    const closeX = PX + PW - 72, closeY = PY + 6;
+    ctx.fillStyle = '#8b0000';
+    ctx.fillRect(closeX, closeY, 66, 24);
+    ctx.strokeStyle = '#ff6666'; ctx.lineWidth = 1;
+    ctx.strokeRect(closeX, closeY, 66, 24);
+    ctx.fillStyle = '#ffaaaa'; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('[X] Close', closeX + 33, closeY + 16);
 
-    // Close button (top-right)
-    const closeX = CANVAS_W - 110, closeY = 68;
-    ctx.fillStyle = 'rgba(255,100,100,0.2)';
-    ctx.fillRect(closeX, closeY, 100, 24);
-    ctx.strokeStyle = '#ff6666';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(closeX, closeY, 100, 24);
-    ctx.fillStyle = '#ff8888';
-    ctx.font = 'bold 12px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('[X] Close', closeX + 50, closeY + 16);
-
-    // Recipe list
-    const listX  = 120;
-    const listY  = 110;
-    const rowH   = 42;
+    // ── Left panel: recipe list ───────────────────────────────────────────
+    const listX = PX + 8, listW = 310, listY = PY + 44, rowH = 38;
+    // Divider
+    ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(PX + listW + 16, PY + 44); ctx.lineTo(PX + listW + 16, PY + PH - 8); ctx.stroke();
 
     RECIPES.forEach((rec, i) => {
       const y      = listY + i * rowH;
-      const afford = crafting.canAfford(rec);
+      const afford = this._craftCanAfford(rec, player);
       const sel    = i === this.selectedRecIdx;
 
-      ctx.fillStyle = sel ? 'rgba(255,215,0,0.2)' : (afford ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.2)');
-      ctx.fillRect(listX, y, CANVAS_W - 240, rowH - 3);
-      ctx.strokeStyle = sel ? '#ffd700' : '#555';
-      ctx.lineWidth = sel ? 2 : 1;
-      ctx.strokeRect(listX, y, CANVAS_W - 240, rowH - 3);
+      ctx.fillStyle = sel ? 'rgba(255,215,0,0.25)' : (afford ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.25)');
+      ctx.fillRect(listX, y, listW, rowH - 2);
+      ctx.strokeStyle = sel ? '#ffd700' : '#555'; ctx.lineWidth = sel ? 2 : 1;
+      ctx.strokeRect(listX, y, listW, rowH - 2);
 
-      ctx.fillStyle = afford ? '#fff' : '#888';
-      ctx.font = `${sel ? 'bold ' : ''}13px monospace`;
-      ctx.textAlign = 'left';
-      ctx.fillText(rec.name, listX + 8, y + 16);
+      ctx.fillStyle = afford ? (sel ? '#ffd700' : '#fff') : '#777';
+      ctx.font = `${sel ? 'bold ' : ''}12px monospace`; ctx.textAlign = 'left';
+      ctx.fillText(rec.name, listX + 8, y + 14);
 
-      // Cost
       const costStr = Object.entries(rec.cost).map(([k, v]) => `${v}×${k}`).join('  ');
-      ctx.fillStyle = afford ? '#c8a060' : '#774433';
-      ctx.font = '11px monospace';
-      ctx.fillText(costStr, listX + 8, y + 30);
-
-      // Craft button
-      if (afford) {
-        ctx.fillStyle = sel ? '#ffd700' : '#9b6a30';
-        ctx.fillRect(CANVAS_W - 240, y + 4, 80, rowH - 10);
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 12px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText('CRAFT', CANVAS_W - 200, y + rowH / 2 + 4);
-      }
+      ctx.fillStyle = afford ? '#c8a060' : '#664422';
+      ctx.font = '10px monospace';
+      ctx.fillText(costStr, listX + 8, y + 28);
     });
 
-    // Inventory summary on right
-    ctx.fillStyle = '#ffd700';
-    ctx.font = 'bold 12px monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText('Inventory:', CANVAS_W - 140, 130);
-    ctx.fillStyle = '#ccc';
-    ctx.font = '11px monospace';
-    ctx.fillText(`Wood:  ${player.res.wood}`,  CANVAS_W - 140, 150);
-    ctx.fillText(`Stone: ${player.res.stone}`, CANVAS_W - 140, 165);
-    ctx.fillText(`Herb:  ${player.res.herb}`,  CANVAS_W - 140, 180);
-    ctx.fillText(`Arrows:${player.arrows}`,    CANVAS_W - 140, 195);
+    // ── Right panel: selected recipe details + CRAFT button ───────────────
+    const rpX = PX + listW + 24, rpY = PY + 44, rpW = PW - listW - 32;
+    const rec = RECIPES[this.selectedRecIdx];
+
+    if (!rec) {
+      ctx.fillStyle = '#888'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
+      ctx.fillText('← select a recipe', rpX + rpW / 2, rpY + 60);
+    } else {
+      const afford = this._craftCanAfford(rec, player);
+
+      // Recipe name
+      ctx.fillStyle = '#ffd700'; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left';
+      ctx.fillText(rec.name, rpX, rpY + 20);
+
+      // Cost breakdown
+      ctx.fillStyle = '#aaa'; ctx.font = '11px monospace';
+      ctx.fillText('Needs:', rpX, rpY + 42);
+      let cy = rpY + 58;
+      for (const [res, cnt] of Object.entries(rec.cost)) {
+        const have  = player.res[res] || 0;
+        const ok    = have >= cnt;
+        ctx.fillStyle = ok ? '#88ff88' : '#ff8888';
+        ctx.fillText(`${res}: ${have}/${cnt}`, rpX + 8, cy);
+        cy += 16;
+      }
+
+      // Inventory
+      cy += 8;
+      ctx.fillStyle = '#aaa'; ctx.font = '11px monospace';
+      ctx.fillText('Your resources:', rpX, cy); cy += 16;
+      ctx.fillStyle = '#c8a060'; ctx.fillText(`Wood:  ${player.res.wood  || 0}`, rpX + 8, cy); cy += 14;
+      ctx.fillStyle = '#aaaaaa'; ctx.fillText(`Stone: ${player.res.stone || 0}`, rpX + 8, cy); cy += 14;
+      ctx.fillStyle = '#70dd60'; ctx.fillText(`Herb:  ${player.res.herb  || 0}`, rpX + 8, cy); cy += 14;
+      ctx.fillStyle = '#ffdd44'; ctx.fillText(`Arrow: ${player.arrows   || 0}`, rpX + 8, cy);
+
+      // CRAFT button
+      const btnY  = rpY + rpW - 10;  // near bottom of right panel
+      const btnH  = 34;
+      const btnW2 = rpW - 4;
+      ctx.fillStyle = afford ? '#2a7a2a' : '#444';
+      ctx.fillRect(rpX, PY + PH - 50, btnW2, btnH);
+      ctx.strokeStyle = afford ? '#88ff88' : '#666'; ctx.lineWidth = 2;
+      ctx.strokeRect(rpX, PY + PH - 50, btnW2, btnH);
+      ctx.fillStyle = afford ? '#aaffaa' : '#777';
+      ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center';
+      ctx.fillText(afford ? 'CRAFT' : 'Not enough', rpX + btnW2 / 2, PY + PH - 50 + 22);
+    }
 
     if (crafting.feedbackTimer > 0) {
-      ctx.fillStyle = '#aaffaa';
-      ctx.font = '14px monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText(crafting.feedback, CANVAS_W / 2, CANVAS_H - 70);
+      ctx.fillStyle = '#aaffaa'; ctx.font = '13px monospace'; ctx.textAlign = 'center';
+      ctx.fillText(crafting.feedback, CANVAS_W / 2, PY + PH - 8);
     }
   }
 
   handleCraftingClick(mx, my, crafting, game) {
     const isOnline = game.menuMode === 'ONLINE';
+    const player   = isOnline
+      ? (() => { const s = game._onlineState; const me = s && s.players.find(p => p.username === Net.username); return me || { res:{}, arrows:0 }; })()
+      : game.player;
+
+    const PX = 90, PY = 45, PW = CANVAS_W - 180, PH = CANVAS_H - 90;
 
     // Close button
-    const closeX = CANVAS_W - 110, closeY = 68;
-    if (mx >= closeX && mx <= closeX + 100 && my >= closeY && my <= closeY + 24) {
+    const closeX = PX + PW - 72, closeY = PY + 6;
+    if (mx >= closeX && mx <= closeX + 66 && my >= closeY && my <= closeY + 24) {
       game.state = isOnline ? 'ONLINE' : 'PLAYING';
       return;
     }
 
-    const listX = 120;
-    const listY = 110;
-    const rowH  = 42;
+    // Recipe list (left panel)
+    const listX = PX + 8, listW = 310, listY = PY + 44, rowH = 38;
     RECIPES.forEach((rec, i) => {
       const y = listY + i * rowH;
-      if (mx >= listX && mx <= CANVAS_W - 120 && my >= y && my <= y + rowH - 3) {
+      if (mx >= listX && mx <= listX + listW && my >= y && my <= y + rowH - 2) {
         this.selectedRecIdx = i;
+      }
+    });
+
+    // CRAFT button (right panel, bottom)
+    const rec = RECIPES[this.selectedRecIdx];
+    if (rec) {
+      const rpX   = PX + listW + 24;
+      const rpW   = PW - listW - 32;
+      const btnY  = PY + PH - 50;
+      const btnH  = 34;
+      if (mx >= rpX && mx <= rpX + rpW - 4 && my >= btnY && my <= btnY + btnH) {
         if (isOnline) {
-          Net.sendInput({}, `craft:${rec.id}`);
+          game._pendingOnlineAction = `craft:${rec.id}`;
         } else {
           crafting.craft(rec.id);
         }
       }
-    });
+    }
   }
 
   // ── Menu / overlays ───────────────────────────────────────────────────────
