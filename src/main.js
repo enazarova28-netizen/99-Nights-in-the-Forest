@@ -908,7 +908,7 @@ class Game {
       this.ui.drawLobbyWaitScreen(ctx, this._lobbyPlayers, this._isHost);
       return;
     }
-    if (this.state === 'ONLINE') {
+    if (this.state === 'ONLINE' || (this.state === 'CRAFTING' && this.menuMode === 'ONLINE')) {
       this._drawOnline(ctx);
       return;
     }
@@ -1110,6 +1110,16 @@ class Game {
     // Server announcement
     if (s.announcement) this.ui.drawOnlineAnnouncement(ctx, s.announcement);
 
+    // Crafting overlay (uses real server resources)
+    if (this.state === 'CRAFTING') {
+      const me = s.players.find(p => p.username === Net.username) || s.players[0];
+      if (me) {
+        const fakePlayer = { res: me.res, arrows: me.arrows };
+        this.ui.drawCraftingMenu(ctx, this.crafting, fakePlayer);
+      }
+      return;
+    }
+
     // Esc hint
     ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,CANVAS_H-22,CANVAS_W,22);
     ctx.fillStyle='#888'; ctx.font='10px monospace'; ctx.textAlign='center';
@@ -1124,7 +1134,7 @@ class Game {
     try {
       if (this.state === 'PLAYING')  this._update(dt);
       if (this.state === 'CRAFTING') this.crafting.update(dt);
-      if (this.state === 'ONLINE')   this._sendOnlineInput();
+      if (this.state === 'ONLINE' || (this.state === 'CRAFTING' && this.menuMode === 'ONLINE')) this._sendOnlineInput();
       this._draw();
     } catch(err) {
       console.error('[Game loop error]', err);
