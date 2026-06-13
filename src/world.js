@@ -66,6 +66,102 @@ class TileMap {
 
     // Clear around each kid
     for (const p of KID_POSITIONS) this._clearArea(p.tx, p.ty, 3);
+
+    // Houses and mines — deterministic zone grid so solo matches multiplayer layout
+    const ZONES_X = 4, ZONES_Y = 4;
+    const ZONE_W  = Math.floor(this.cols / ZONES_X);
+    const ZONE_H  = Math.floor(this.rows / ZONES_Y);
+    for (let zy = 0; zy < ZONES_Y; zy++) {
+      for (let zx = 0; zx < ZONES_X; zx++) {
+        const zoneCx = zx * ZONE_W + Math.floor(ZONE_W / 2);
+        const zoneCy = zy * ZONE_H + Math.floor(ZONE_H / 2);
+        if (Math.hypot(zoneCx - PLAYER_START.tx, zoneCy - PLAYER_START.ty) < 14) continue;
+
+        const seed  = zx * 13 + zy * 7;
+        const frac  = n => { const v = Math.sin(n * 47.3 + seed * 1.9) * 43758.5; return v - Math.floor(v); };
+
+        let bx = Math.floor(zx * ZONE_W + 2 + frac(1) * (ZONE_W - 14));
+        let by = Math.floor(zy * ZONE_H + 2 + frac(2) * (ZONE_H - 12));
+        bx = Math.max(2, Math.min(bx, this.cols - 12));
+        by = Math.max(2, Math.min(by, this.rows - 10));
+
+        if (frac(3) < 0.65) this._genHouse(bx, by, seed);
+        else                 this._genMine(bx, by, seed);
+      }
+    }
+  }
+
+  _genHouse(bx, by, seed) {
+    const frac = n => { const v = Math.sin(n * 53.3 + seed * 2.7) * 43758.5; return v - Math.floor(v); };
+    const sizes = [[6,5],[8,4],[5,7],[7,6]];
+    const [w, h] = sizes[Math.floor(frac(1) * 4)];
+
+    bx = Math.max(2, Math.min(bx, this.cols - w - 2));
+    by = Math.max(2, Math.min(by, this.rows - h - 3));
+
+    // Clear surroundings so house is accessible
+    for (let dy = -1; dy <= h; dy++) {
+      for (let dx = -1; dx <= w; dx++) {
+        const tx = bx + dx, ty = by + dy;
+        if (tx < 0 || ty < 0 || tx >= this.cols || ty >= this.rows) continue;
+        if (dx >= 0 && dx < w && dy >= 0 && dy < h) continue;
+        const t = this.get(tx, ty);
+        if (t === T.TREE || t === T.ROCK || t === T.HERB) this.set(tx, ty, T.GRASS);
+      }
+    }
+
+    // Walls and interior
+    for (let ty = by; ty < by + h; ty++) {
+      for (let tx = bx; tx < bx + w; tx++) {
+        const wall = tx === bx || tx === bx+w-1 || ty === by || ty === by+h-1;
+        this.set(tx, ty, wall ? T.WOOD_WALL : T.GRASS);
+      }
+    }
+
+    // Door at south-center
+    const doorTx = bx + Math.floor(w / 2);
+    this.set(doorTx, by + h - 1, T.DOOR);
+    if (by + h < this.rows) this.set(doorTx, by + h, T.GRASS);
+
+    // Chest at interior center
+    this.set(bx + Math.floor(w / 2), by + Math.floor(h / 2), T.CHEST);
+  }
+
+  _genMine(bx, by, seed) {
+    const w = 5, h = 4;
+    bx = Math.max(2, Math.min(bx, this.cols - w - 3));
+    by = Math.max(2, Math.min(by, this.rows - h - 4));
+
+    // Clear surroundings
+    for (let dy = -1; dy <= h + 3; dy++) {
+      for (let dx = -1; dx <= w + 1; dx++) {
+        const tx = bx + dx, ty = by + dy;
+        if (tx < 0 || ty < 0 || tx >= this.cols || ty >= this.rows) continue;
+        if (dx >= 0 && dx < w && dy >= 0 && dy < h) continue;
+        const t = this.get(tx, ty);
+        if (t === T.TREE || t === T.ROCK || t === T.HERB) this.set(tx, ty, T.GRASS);
+      }
+    }
+
+    // Solid mine block
+    for (let ty = by; ty < by + h; ty++) {
+      for (let tx = bx; tx < bx + w; tx++) {
+        this.set(tx, ty, T.WOOD_WALL);
+      }
+    }
+
+    // Mine entrance tile at south-center
+    const entrTx = bx + Math.floor(w / 2);
+    this.set(entrTx, by + h - 1, T.MINE_ENTRANCE);
+
+    // Chest just south of mine
+    const chestTy = by + h + 1;
+    if (chestTy < this.rows - 1) {
+      this.set(entrTx, by + h, T.GRASS);
+      this.set(entrTx, chestTy, T.CHEST);
+      if (entrTx > 0)              this.set(entrTx - 1, chestTy, T.GRASS);
+      if (entrTx < this.cols - 1)  this.set(entrTx + 1, chestTy, T.GRASS);
+    }
   }
 
   _clearArea(cx, cy, r) {
@@ -269,6 +365,44 @@ class TileMap {
         ctx.fillRect(x + 7,  y + 12, 3, 6);
         ctx.fillRect(x + 14, y + 12, 3, 6);
         ctx.fillRect(x + 21, y + 12, 3, 6);
+        break;
+
+      case T.CHEST:
+        ctx.fillStyle = (tx + ty) % 2 === 0 ? '#2d5a27' : '#2a5525';
+        ctx.fillRect(x, y, s, s);
+        ctx.fillStyle = '#7a4a20';
+        ctx.fillRect(x + 4, y + 9, s - 8, s - 13);
+        ctx.fillStyle = '#a0602a';
+        ctx.fillRect(x + 4, y + 9, s - 8, 7);
+        ctx.strokeStyle = '#3a1f00';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(x + 4, y + 9, s - 8, s - 13);
+        ctx.strokeRect(x + 4, y + 9, s - 8, 7);
+        ctx.fillStyle = '#ffd700';
+        ctx.fillRect(x + s / 2 - 3, y + 13, 6, 5);
+        ctx.fillRect(x + s / 2 - 1, y + 14, 2, 3);
+        break;
+
+      case T.MINE_ENTRANCE:
+        ctx.fillStyle = '#111';
+        ctx.fillRect(x, y, s, s);
+        ctx.strokeStyle = '#7a4a20';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(x + 3, y + 4); ctx.lineTo(x + s - 3, y + s - 4);
+        ctx.moveTo(x + s - 3, y + 4); ctx.lineTo(x + 3, y + s - 4);
+        ctx.stroke();
+        ctx.fillStyle = '#ff8800';
+        ctx.beginPath();
+        ctx.moveTo(x + s / 2, y + 4);
+        ctx.lineTo(x + s - 5, y + s - 6);
+        ctx.lineTo(x + 5, y + s - 6);
+        ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#111';
+        ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('!', x + s / 2, y + s - 10);
+        ctx.textAlign = 'left';
         break;
 
       default:

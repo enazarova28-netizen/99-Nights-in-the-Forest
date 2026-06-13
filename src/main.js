@@ -106,6 +106,7 @@ class Game {
         if (e.code === 'Tab')   { e.preventDefault(); this.state = 'CRAFTING'; return; }
         if (e.code === 'Space') { this._pendingOnlineAction = 'attack'; return; }
         if (e.code === 'KeyE')  { this._pendingOnlineAction = 'interact'; return; }
+        if (e.code === 'Enter') { this._pendingOnlineAction = 'use_door'; return; }
         for (let i = 1; i <= 6; i++) {
           if (e.code === `Digit${i}`) { this._pendingOnlineAction = `hotbar:${i-1}`; return; }
         }
@@ -171,6 +172,8 @@ class Game {
       } else if (e.code === 'KeyE') {
         if      (this.state === 'PLAYING')  this._doInteract();
         else if (this.state === 'CRAFTING') this.state = 'PLAYING';
+      } else if (e.code === 'Enter' && this.state === 'PLAYING') {
+        this._doUseDoor();
       }
 
     });
@@ -752,6 +755,22 @@ class Game {
         this.crafting.feedback = `+${count} Herb`;
         this.crafting.feedbackTimer = 1400;
         return;
+      } else if (tile === T.CHEST) {
+        const h = n => { const v = Math.sin(n) * 43758.5; return v - Math.floor(v); };
+        const s = c.tx * 100 + c.ty;
+        const wood  = 3 + Math.floor(h(s * 13.7) * 6);
+        const stone = h(s * 27.3) > 0.4 ? 1 + Math.floor(h(s * 53.1) * 4) : 0;
+        const herb  = h(s * 41.7) > 0.6 ? 1 + Math.floor(h(s * 71.9) * 3) : 0;
+        p.addRes('wood',  wood);
+        if (stone) p.addRes('stone', stone);
+        if (herb)  p.addRes('herb',  herb);
+        this.map.set(c.tx, c.ty, T.GRASS);
+        let msg = `+${wood} Wood`;
+        if (stone) msg += `, +${stone} Stone`;
+        if (herb)  msg += `, +${herb} Herb`;
+        this.crafting.feedback = msg;
+        this.crafting.feedbackTimer = 2000;
+        return;
       }
     }
 
@@ -762,6 +781,66 @@ class Game {
     const pdy = p.y + p.h / 2;
     if (distance({ x: pdx, y: pdy }, { x: ctx, y: cty }) < TILE_SIZE * 4) {
       this.state = 'CRAFTING';
+    }
+  }
+
+  _drawMineLabels(ctx, camX, camY, player) {
+    if (!player) return;
+    const ptx = Math.floor((player.x + (player.w || 24) / 2) / TILE_SIZE);
+    const pty = Math.floor((player.y + (player.h || 24) / 2) / TILE_SIZE);
+    for (let ty = pty - 5; ty <= pty + 5; ty++) {
+      for (let tx = ptx - 5; tx <= ptx + 5; tx++) {
+        const tile = this.map.get(tx, ty);
+        if (tile === T.MINE_ENTRANCE) {
+          const sx = tx * TILE_SIZE - camX + TILE_SIZE / 2;
+          const sy = ty * TILE_SIZE - camY;
+          ctx.fillStyle = 'rgba(0,0,0,0.78)';
+          ctx.fillRect(sx - 35, sy - 18, 70, 14);
+          ctx.fillStyle = '#ff4444';
+          ctx.font = 'bold 9px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('DO NOT ENTER', sx, sy - 7);
+        } else if (tile === T.DOOR && Math.abs(tx - ptx) <= 1 && Math.abs(ty - pty) <= 1) {
+          const sx = tx * TILE_SIZE - camX + TILE_SIZE / 2;
+          const sy = ty * TILE_SIZE - camY;
+          ctx.fillStyle = 'rgba(0,0,0,0.7)';
+          ctx.fillRect(sx - 26, sy - 18, 52, 14);
+          ctx.fillStyle = '#ffd700';
+          ctx.font = '9px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('[Enter] Door', sx, sy - 7);
+        } else if (tile === T.CHEST && Math.abs(tx - ptx) <= 2 && Math.abs(ty - pty) <= 2) {
+          const sx = tx * TILE_SIZE - camX + TILE_SIZE / 2;
+          const sy = ty * TILE_SIZE - camY;
+          ctx.fillStyle = 'rgba(0,0,0,0.7)';
+          ctx.fillRect(sx - 24, sy - 18, 48, 14);
+          ctx.fillStyle = '#ffd700';
+          ctx.font = '9px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('[E] Open', sx, sy - 7);
+        }
+        ctx.textAlign = 'left';
+      }
+    }
+  }
+
+  _doUseDoor() {
+    const p = this.player;
+    const pcx = Math.floor((p.x + p.w / 2) / TILE_SIZE);
+    const pcy = Math.floor((p.y + p.h / 2) / TILE_SIZE);
+    const checks = [
+      { tx: pcx, ty: pcy - 1 }, { tx: pcx, ty: pcy + 1 },
+      { tx: pcx - 1, ty: pcy }, { tx: pcx + 1, ty: pcy },
+    ];
+    for (const c of checks) {
+      if (this.map.get(c.tx, c.ty) !== T.DOOR) continue;
+      const ddx = c.tx - pcx, ddy = c.ty - pcy;
+      const dtx = c.tx + ddx, dty = c.ty + ddy;
+      if (!this.map.isSolid(dtx, dty, true)) {
+        p.x = dtx * TILE_SIZE + (TILE_SIZE - p.w) / 2;
+        p.y = dty * TILE_SIZE + (TILE_SIZE - p.h) / 2;
+      }
+      return;
     }
   }
 
@@ -931,6 +1010,7 @@ class Game {
 
     // World
     this.map.draw(ctx, cam);
+    this._drawMineLabels(ctx, cam.x, cam.y, this.player);
 
     // Night darkness overlay
     if (this.phase === 'night') {
@@ -1027,6 +1107,7 @@ class Game {
 
     // World (reuse local map for display; server manages authoritative state)
     this.map.draw(ctx, { x: camX, y: camY, sx: 0, sy: 0 });
+    this._drawMineLabels(ctx, camX, camY, me);
 
     if (s.phase === 'night') { ctx.fillStyle='rgba(0,0,20,0.38)'; ctx.fillRect(0,0,CANVAS_W,CANVAS_H); }
 

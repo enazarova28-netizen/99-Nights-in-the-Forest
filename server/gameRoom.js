@@ -12,10 +12,11 @@ const T = {
   GRASS:0, TREE:1, ROCK:2, STUMP:3,
   CRAFTING_TABLE:4, HERB:5,
   WOOD_WALL:6, STONE_WALL:7, DOOR:8,
-  CAMPFIRE:9, TRAP:10, FARM:11
+  CAMPFIRE:9, TRAP:10, FARM:11,
+  CHEST:12, MINE_ENTRANCE:13
 };
 
-const TILE_SOLID = new Set([T.TREE, T.ROCK, T.WOOD_WALL, T.STONE_WALL]);
+const TILE_SOLID = new Set([T.TREE, T.ROCK, T.WOOD_WALL, T.STONE_WALL, T.MINE_ENTRANCE, T.CHEST]);
 
 const RECIPES = [
   { id:'wood_wall',  name:'Wood Wall',   cost:{wood:3},           type:'placeable', tile:T.WOOD_WALL  },
@@ -179,6 +180,102 @@ class ServerTileMap {
             this.set(p.tx+dx, p.ty+dy, T.GRASS);
         }
       }
+    }
+
+    // Houses and mines — zone grid (matches client world.js generation)
+    const ZONES_X = 4, ZONES_Y = 4;
+    const ZONE_W  = Math.floor(MAP_COLS / ZONES_X);
+    const ZONE_H  = Math.floor(MAP_ROWS / ZONES_Y);
+    for (let zy = 0; zy < ZONES_Y; zy++) {
+      for (let zx = 0; zx < ZONES_X; zx++) {
+        const zoneCx = zx * ZONE_W + Math.floor(ZONE_W / 2);
+        const zoneCy = zy * ZONE_H + Math.floor(ZONE_H / 2);
+        if (Math.hypot(zoneCx - PLAYER_START.tx, zoneCy - PLAYER_START.ty) < 14) continue;
+
+        const seed = zx * 13 + zy * 7;
+        const frac = n => { const v = Math.sin(n * 47.3 + seed * 1.9) * 43758.5; return v - Math.floor(v); };
+
+        let bx = Math.floor(zx * ZONE_W + 2 + frac(1) * (ZONE_W - 14));
+        let by = Math.floor(zy * ZONE_H + 2 + frac(2) * (ZONE_H - 12));
+        bx = Math.max(2, Math.min(bx, MAP_COLS - 12));
+        by = Math.max(2, Math.min(by, MAP_ROWS - 10));
+
+        if (frac(3) < 0.65) this._genHouse(bx, by, seed);
+        else                 this._genMine(bx, by, seed);
+      }
+    }
+  }
+
+  _genHouse(bx, by, seed) {
+    const frac = n => { const v = Math.sin(n * 53.3 + seed * 2.7) * 43758.5; return v - Math.floor(v); };
+    const sizes = [[6,5],[8,4],[5,7],[7,6]];
+    const [w, h] = sizes[Math.floor(frac(1) * 4)];
+
+    bx = Math.max(2, Math.min(bx, MAP_COLS - w - 2));
+    by = Math.max(2, Math.min(by, MAP_ROWS - h - 3));
+
+    // Clear surroundings
+    for (let dy = -1; dy <= h; dy++) {
+      for (let dx = -1; dx <= w; dx++) {
+        const tx = bx+dx, ty = by+dy;
+        if (tx<0||ty<0||tx>=MAP_COLS||ty>=MAP_ROWS) continue;
+        if (dx>=0&&dx<w&&dy>=0&&dy<h) continue;
+        const t = this.get(tx, ty);
+        if (t===T.TREE||t===T.ROCK||t===T.HERB) this.set(tx, ty, T.GRASS);
+      }
+    }
+
+    // Walls and interior
+    for (let ty = by; ty < by+h; ty++) {
+      for (let tx = bx; tx < bx+w; tx++) {
+        const wall = tx===bx||tx===bx+w-1||ty===by||ty===by+h-1;
+        this.set(tx, ty, wall ? T.WOOD_WALL : T.GRASS);
+      }
+    }
+
+    // Door at south-center
+    const doorTx = bx + Math.floor(w / 2);
+    this.set(doorTx, by+h-1, T.DOOR);
+    if (by+h < MAP_ROWS) this.set(doorTx, by+h, T.GRASS);
+
+    // Chest at interior center
+    this.set(bx + Math.floor(w/2), by + Math.floor(h/2), T.CHEST);
+  }
+
+  _genMine(bx, by, seed) {
+    const w = 5, h = 4;
+    bx = Math.max(2, Math.min(bx, MAP_COLS - w - 3));
+    by = Math.max(2, Math.min(by, MAP_ROWS - h - 4));
+
+    // Clear surroundings
+    for (let dy = -1; dy <= h+3; dy++) {
+      for (let dx = -1; dx <= w+1; dx++) {
+        const tx = bx+dx, ty = by+dy;
+        if (tx<0||ty<0||tx>=MAP_COLS||ty>=MAP_ROWS) continue;
+        if (dx>=0&&dx<w&&dy>=0&&dy<h) continue;
+        const t = this.get(tx, ty);
+        if (t===T.TREE||t===T.ROCK||t===T.HERB) this.set(tx, ty, T.GRASS);
+      }
+    }
+
+    // Solid mine block
+    for (let ty = by; ty < by+h; ty++) {
+      for (let tx = bx; tx < bx+w; tx++) {
+        this.set(tx, ty, T.WOOD_WALL);
+      }
+    }
+
+    // Mine entrance tile at south-center
+    const entrTx = bx + Math.floor(w / 2);
+    this.set(entrTx, by+h-1, T.MINE_ENTRANCE);
+
+    // Chest just south of mine
+    const chestTy = by+h+1;
+    if (chestTy < MAP_ROWS-1) {
+      this.set(entrTx, by+h,  T.GRASS);
+      this.set(entrTx, chestTy, T.CHEST);
+      if (entrTx > 0)         this.set(entrTx-1, chestTy, T.GRASS);
+      if (entrTx < MAP_COLS-1) this.set(entrTx+1, chestTy, T.GRASS);
     }
   }
 }
@@ -784,6 +881,8 @@ class GameRoom {
       this._doInteract(p);
     } else if (action === 'revive') {
       this._tryReviveAction(p);
+    } else if (action === 'use_door') {
+      this._doUseDoor(p);
     } else if (action.startsWith('craft:')) {
       const recId = action.slice(6);
       this._doCraft(p, recId);
@@ -873,6 +972,43 @@ class GameRoom {
       if (tile === T.TREE)  { const n = p.hasAxe?2:1; p.addRes('wood', n);  this.map.chopTree(c.tx, c.ty); return; }
       if (tile === T.ROCK)  { p.addRes('stone', 1); this.map.set(c.tx, c.ty, T.GRASS); return; }
       if (tile === T.HERB)  { p.addRes('herb', randInt(1,2)); this.map.set(c.tx, c.ty, T.GRASS); return; }
+      if (tile === T.CHEST) {
+        const loot = this._chestLoot(c.tx, c.ty);
+        for (const [res, amt] of Object.entries(loot)) p.addRes(res, amt);
+        this.map.set(c.tx, c.ty, T.GRASS);
+        const lootStr = Object.entries(loot).map(([r,n]) => `+${n} ${r}`).join(', ');
+        this.announcementText  = `${p.username} found: ${lootStr}!`;
+        this.announcementTimer = 3000;
+        return;
+      }
+    }
+  }
+
+  _chestLoot(tx, ty) {
+    const h = n => { const v = Math.sin(n) * 43758.5; return v - Math.floor(v); };
+    const s = tx * 100 + ty;
+    const loot = { wood: 3 + Math.floor(h(s * 13.7) * 6) };
+    if (h(s * 27.3) > 0.4) loot.stone = 1 + Math.floor(h(s * 53.1) * 4);
+    if (h(s * 41.7) > 0.6) loot.herb  = 1 + Math.floor(h(s * 71.9) * 3);
+    return loot;
+  }
+
+  _doUseDoor(p) {
+    const pcx = Math.floor((p.x + p.w/2) / TILE_SIZE);
+    const pcy = Math.floor((p.y + p.h/2) / TILE_SIZE);
+    const checks = [
+      { tx:pcx, ty:pcy-1 }, { tx:pcx, ty:pcy+1 },
+      { tx:pcx-1, ty:pcy }, { tx:pcx+1, ty:pcy },
+    ];
+    for (const c of checks) {
+      if (this.map.get(c.tx, c.ty) !== T.DOOR) continue;
+      const ddx = c.tx - pcx, ddy = c.ty - pcy;
+      const dtx = c.tx + ddx, dty = c.ty + ddy;
+      if (!this.map.isSolid(dtx, dty, true)) {
+        p.x = dtx * TILE_SIZE + (TILE_SIZE - p.w) / 2;
+        p.y = dty * TILE_SIZE + (TILE_SIZE - p.h) / 2;
+      }
+      return;
     }
   }
 
