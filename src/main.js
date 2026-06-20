@@ -1130,16 +1130,48 @@ class Game {
       ctx.fillStyle='#ffcc99'; ctx.beginPath(); ctx.arc(sx+k.w/2,sy+6,7,0,Math.PI*2); ctx.fill();
     }
 
-    // Enemies (simple colored rects by type)
-    const ENEMY_COLORS = { Goat:'#cccccc', Villager:'#884422', BipedalDeer:'#886644' };
+    // Enemies
     for (const e of s.enemies) {
       const sx=e.x-camX, sy=e.y-camY;
       if (sx<-100||sx>CANVAS_W+100||sy<-100||sy>CANVAS_H+100) continue;
-      ctx.fillStyle = ENEMY_COLORS[e.type] || '#ff0000';
-      ctx.fillRect(sx, sy, e.w||28, e.h||28);
+      const ew=e.w||28, eh=e.h||28;
+      if (e.type === 'BipedalDeer') {
+        // Boss — keep large animal look
+        ctx.fillStyle='#8b5e3c'; ctx.fillRect(sx+6,sy+22,ew-12,eh-30);
+        ctx.fillStyle='#a07040'; ctx.fillRect(sx+10,sy+8,22,16);
+        ctx.fillStyle='#6b4226'; ctx.fillRect(sx+8,sy+eh-14,10,14); ctx.fillRect(sx+ew-18,sy+eh-14,10,14);
+        ctx.fillStyle='#555'; ctx.fillRect(sx+12,sy,4,10); ctx.fillRect(sx+ew-16,sy,4,10);
+      } else {
+        const bodyColor = e.type==='Goat' ? '#909090' : '#5a3080';
+        const hatColor  = e.type==='Goat' ? '#555555' : '#3a1a60';
+        const hx = sx + Math.floor(ew/2) - 6;
+        // Body
+        ctx.fillStyle = bodyColor;
+        ctx.fillRect(sx+2, sy+Math.floor(eh*0.42), ew-4, Math.floor(eh*0.58));
+        // Head
+        ctx.fillStyle = '#ffcc99';
+        ctx.fillRect(hx, sy+Math.floor(eh*0.1), 12, 11);
+        // Hat brim
+        ctx.fillStyle = hatColor;
+        ctx.fillRect(hx-2, sy+Math.floor(eh*0.1)-1, 16, 3);
+        ctx.fillRect(hx,   sy+Math.floor(eh*0.1)-7,  12, 7);
+        // Eyes
+        ctx.fillStyle='#222';
+        ctx.fillRect(hx+2, sy+Math.floor(eh*0.1)+3, 2, 2);
+        ctx.fillRect(hx+8, sy+Math.floor(eh*0.1)+3, 2, 2);
+        // Weapon
+        if (e.type==='Goat') {
+          ctx.strokeStyle='#6b4226'; ctx.lineWidth=3;
+          ctx.beginPath(); ctx.moveTo(sx+ew,sy+eh/2); ctx.lineTo(sx+ew+10,sy+eh/2-10); ctx.stroke();
+          ctx.fillStyle='#888'; ctx.beginPath(); ctx.arc(sx+ew+10,sy+eh/2-12,4,0,Math.PI*2); ctx.fill();
+        } else {
+          ctx.fillStyle='#8b4513'; ctx.fillRect(sx+ew,sy+8,3,16);
+          ctx.fillStyle='#ff8800'; ctx.beginPath(); ctx.arc(sx+ew+1,sy+7,4,0,Math.PI*2); ctx.fill();
+        }
+      }
       // HP bar
-      ctx.fillStyle='#500'; ctx.fillRect(sx,sy-7,e.w,4);
-      ctx.fillStyle='#0c0'; ctx.fillRect(sx,sy-7,(e.w||28)*(e.hp/e.maxHp),4);
+      ctx.fillStyle='#500'; ctx.fillRect(sx,sy-8,ew,4);
+      ctx.fillStyle='#0c0'; ctx.fillRect(sx,sy-8,ew*(e.hp/e.maxHp),4);
     }
 
     // All players

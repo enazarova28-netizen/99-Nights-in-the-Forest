@@ -1,3 +1,25 @@
+// Shared humanoid sprite: body + skin head + hat, used by all human-type enemies
+function drawHumanoid(ctx, sx, sy, w, h, bodyColor, hatColor, flash) {
+  const hx = sx + Math.floor(w / 2) - 6; // head x offset
+  // Body
+  ctx.fillStyle = bodyColor;
+  ctx.fillRect(sx + 2, sy + Math.floor(h * 0.42), w - 4, Math.floor(h * 0.58));
+  // Head
+  ctx.fillStyle = flash ? '#fff' : '#ffcc99';
+  ctx.fillRect(hx, sy + Math.floor(h * 0.1), 12, 11);
+  // Hat brim
+  ctx.fillStyle = flash ? '#fff' : hatColor;
+  ctx.fillRect(hx - 2, sy + Math.floor(h * 0.1) - 1, 16, 3);
+  // Hat top
+  ctx.fillRect(hx, sy + Math.floor(h * 0.1) - 7, 12, 7);
+  // Eyes
+  if (!flash) {
+    ctx.fillStyle = '#222';
+    ctx.fillRect(hx + 2, sy + Math.floor(h * 0.1) + 3, 2, 2);
+    ctx.fillRect(hx + 8, sy + Math.floor(h * 0.1) + 3, 2, 2);
+  }
+}
+
 class Enemy extends Entity {
   constructor(x, y, w, h) {
     super(x, y, w, h);
@@ -98,32 +120,21 @@ class Goat extends Enemy {
   draw(ctx, sx, sy) {
     const flash = this.flashTimer > 0 && Math.floor(this.flashTimer / 50) % 2 === 0;
     const tele  = this.state === 'telegraph';
-
-    ctx.fillStyle = flash ? '#fff' : (tele ? '#ff9999' : '#e0e0e0');
-    ctx.fillRect(sx, sy + 4, this.w, this.h - 4);
-
-    // Head (on right side facing default)
-    ctx.fillStyle = flash ? '#fff' : '#ddd';
-    ctx.fillRect(sx + this.w - 12, sy + 4, 12, 11);
-
-    // Horns
-    ctx.fillStyle = '#555';
-    ctx.fillRect(sx + this.w - 10, sy, 3, 7);
-    ctx.fillRect(sx + this.w - 5,  sy, 3, 7);
-
-    // Eye
-    ctx.fillStyle = '#900';
-    ctx.fillRect(sx + this.w - 5, sy + 6, 2, 2);
-
-    // Legs
-    ctx.fillStyle = '#bbb';
-    for (let i = 0; i < 3; i++) ctx.fillRect(sx + 3 + i * 8, sy + this.h, 5, 5);
-
-    // Tail
-    ctx.fillStyle = '#ddd';
-    ctx.fillRect(sx, sy + 6, 4, 5);
-
-    this.drawHpBar(ctx, sx, sy - 2);
+    const body  = flash ? '#fff' : (tele ? '#ffbbbb' : '#909090');
+    drawHumanoid(ctx, sx, sy, this.w, this.h, body, '#555555', flash);
+    // Club
+    if (!flash) {
+      ctx.strokeStyle = '#6b4226'; ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(sx + this.w, sy + this.h / 2);
+      ctx.lineTo(sx + this.w + 10, sy + this.h / 2 - 10);
+      ctx.stroke();
+      ctx.fillStyle = '#888';
+      ctx.beginPath();
+      ctx.arc(sx + this.w + 10, sy + this.h / 2 - 12, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    this.drawHpBar(ctx, sx, sy - 10);
   }
 }
 
@@ -144,28 +155,22 @@ class Villager extends Enemy {
 
   draw(ctx, sx, sy) {
     const flash = this.flashTimer > 0 && Math.floor(this.flashTimer / 50) % 2 === 0;
-    // Body
-    ctx.fillStyle = flash ? '#fff' : '#3a3a3a';
-    ctx.fillRect(sx + 2, sy + 10, this.w - 4, this.h - 10);
-    // Shirt accent
-    ctx.fillStyle = flash ? '#fff' : '#cc4422';
-    ctx.fillRect(sx + 4, sy + 12, this.w - 8, 8);
-    // Head
-    ctx.fillStyle = flash ? '#fff' : '#e8c090';
-    ctx.fillRect(sx + 4, sy + 1, 12, 11);
-    // Eyes
-    ctx.fillStyle = '#222';
-    ctx.fillRect(sx + 6, sy + 4, 2, 2);
-    ctx.fillRect(sx + 12, sy + 4, 2, 2);
-    // Weapon (torch)
-    ctx.fillStyle = '#8b4513';
-    ctx.fillRect(sx + this.w, sy + 6, 4, 18);
-    ctx.fillStyle = '#ff8800';
-    ctx.beginPath();
-    ctx.arc(sx + this.w + 2, sy + 5, 4, 0, Math.PI * 2);
-    ctx.fill();
-
-    this.drawHpBar(ctx, sx, sy - 2);
+    const body  = flash ? '#fff' : '#5a3080';
+    drawHumanoid(ctx, sx, sy, this.w, this.h, body, '#3a1a60', flash);
+    // Torch
+    if (!flash) {
+      ctx.fillStyle = '#8b4513';
+      ctx.fillRect(sx + this.w, sy + 8, 3, 16);
+      ctx.fillStyle = '#ff8800';
+      ctx.beginPath();
+      ctx.arc(sx + this.w + 1, sy + 7, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,180,0,0.4)';
+      ctx.beginPath();
+      ctx.arc(sx + this.w + 1, sy + 7, 7, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    this.drawHpBar(ctx, sx, sy - 10);
   }
 }
 
