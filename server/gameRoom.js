@@ -92,7 +92,7 @@ class ServerTileMap {
 
   isSolid(tx, ty, isPlayer = false) {
     const t = this.get(tx, ty);
-    if (isPlayer && t === T.DOOR) return false;
+    if (t === T.DOOR) return !isPlayer;
     return TILE_SOLID.has(t);
   }
 

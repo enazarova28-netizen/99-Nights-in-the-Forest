@@ -21,9 +21,8 @@ class TileMap {
 
   isSolid(tx, ty, isPlayer) {
     const t = this.get(tx, ty);
-    if (TILE_SOLID.has(t)) return true;
-    if (!isPlayer && t === T.DOOR) return true;
-    return false;
+    if (t === T.DOOR) return !isPlayer;
+    return TILE_SOLID.has(t);
   }
 
   generate() {
