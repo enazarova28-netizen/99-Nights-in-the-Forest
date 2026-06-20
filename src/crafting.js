@@ -59,6 +59,7 @@ class CraftingSystem {
     const ty = Math.floor(cy / TILE_SIZE);
 
     if (map.get(tx, ty) !== T.GRASS) return false;
+    if (Math.hypot(tx - PLAYER_START.tx, ty - PLAYER_START.ty) < 5) return false;
 
     // Don't wall yourself in — block placement on tiles the player occupies
     const ptx0 = Math.floor(player.x / TILE_SIZE);

@@ -949,7 +949,8 @@ class GameRoom {
         // Place at tile in front of player
         const tx = Math.floor((p.x + p.w/2 + p.facing.x * TILE_SIZE) / TILE_SIZE);
         const ty = Math.floor((p.y + p.h/2 + p.facing.y * TILE_SIZE) / TILE_SIZE);
-        if (this.map.get(tx, ty) === T.GRASS) {
+        const nearSpawn = Math.hypot(tx - PLAYER_START.tx, ty - PLAYER_START.ty) < 5;
+        if (this.map.get(tx, ty) === T.GRASS && !nearSpawn) {
           this.map.set(tx, ty, rec.tile);
           p.removeItem(selId);
           return;
