@@ -536,8 +536,28 @@ class ServerKid {
     }
     if (!nearest || nd < 48) return;
     const n = normalize(nearest.x - this.x, nearest.y - this.y);
-    this.x = clamp(this.x + n.x * 80 * dt / 1000, TILE_SIZE, (MAP_COLS-2)*TILE_SIZE - this.w);
-    this.y = clamp(this.y + n.y * 80 * dt / 1000, TILE_SIZE, (MAP_ROWS-2)*TILE_SIZE - this.h);
+    this._moveX(n.x * 80 * dt / 1000, map);
+    this._moveY(n.y * 80 * dt / 1000, map);
+  }
+
+  _moveX(dx, map) {
+    this.x += dx;
+    const lx = Math.floor(this.x / TILE_SIZE);
+    const rx = Math.floor((this.x + this.w - 1) / TILE_SIZE);
+    const ty = Math.floor(this.y / TILE_SIZE);
+    const by = Math.floor((this.y + this.h - 1) / TILE_SIZE);
+    if (map.isSolid(lx,ty)||map.isSolid(lx,by)||map.isSolid(rx,ty)||map.isSolid(rx,by)) this.x -= dx;
+    this.x = clamp(this.x, TILE_SIZE, (MAP_COLS-2)*TILE_SIZE - this.w);
+  }
+
+  _moveY(dy, map) {
+    this.y += dy;
+    const tx = Math.floor(this.x / TILE_SIZE);
+    const rx = Math.floor((this.x + this.w - 1) / TILE_SIZE);
+    const ty = Math.floor(this.y / TILE_SIZE);
+    const by = Math.floor((this.y + this.h - 1) / TILE_SIZE);
+    if (map.isSolid(tx,ty)||map.isSolid(rx,ty)||map.isSolid(tx,by)||map.isSolid(rx,by)) this.y -= dy;
+    this.y = clamp(this.y, TILE_SIZE, (MAP_ROWS-2)*TILE_SIZE - this.h);
   }
 
   toNet() {
