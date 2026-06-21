@@ -383,25 +383,25 @@ class ServerPlayer {
     this.x += dx;
     const lx = Math.floor(this.x / TILE_SIZE);
     const rx = Math.floor((this.x + this.w - 1) / TILE_SIZE);
-    const ty = Math.floor(this.y / TILE_SIZE);
-    const by = Math.floor((this.y + this.h - 1) / TILE_SIZE);
-    if (map.isSolid(lx,ty,true)||map.isSolid(lx,by,true)||
-        map.isSolid(rx,ty,true)||map.isSolid(rx,by,true)) {
-      this.x -= dx;
-    }
+    const ty = Math.floor((this.y + 1) / TILE_SIZE);
+    const by = Math.floor((this.y + this.h - 2) / TILE_SIZE);
+    const hit = dx < 0
+      ? (map.isSolid(lx,ty,true) || map.isSolid(lx,by,true))
+      : (map.isSolid(rx,ty,true) || map.isSolid(rx,by,true));
+    if (hit) this.x -= dx;
     this.x = clamp(this.x, TILE_SIZE, (MAP_COLS-2)*TILE_SIZE - this.w);
   }
 
   moveY(dy, map) {
     this.y += dy;
-    const tx = Math.floor(this.x / TILE_SIZE);
-    const rx = Math.floor((this.x + this.w - 1) / TILE_SIZE);
+    const tx = Math.floor((this.x + 1) / TILE_SIZE);
+    const rx = Math.floor((this.x + this.w - 2) / TILE_SIZE);
     const ty = Math.floor(this.y / TILE_SIZE);
     const by = Math.floor((this.y + this.h - 1) / TILE_SIZE);
-    if (map.isSolid(tx,ty,true)||map.isSolid(rx,ty,true)||
-        map.isSolid(tx,by,true)||map.isSolid(rx,by,true)) {
-      this.y -= dy;
-    }
+    const hit = dy < 0
+      ? (map.isSolid(tx,ty,true) || map.isSolid(rx,ty,true))
+      : (map.isSolid(tx,by,true) || map.isSolid(rx,by,true));
+    if (hit) this.y -= dy;
     this.y = clamp(this.y, TILE_SIZE, (MAP_ROWS-2)*TILE_SIZE - this.h);
   }
 

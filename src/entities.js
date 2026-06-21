@@ -18,25 +18,25 @@ class Entity {
     this.x += dx;
     const lx = Math.floor(this.x / TILE_SIZE);
     const rx = Math.floor((this.x + this.w - 1) / TILE_SIZE);
-    const ty = Math.floor(this.y / TILE_SIZE);
-    const by = Math.floor((this.y + this.h - 1) / TILE_SIZE);
-    if (map.isSolid(lx, ty, this.isPlayer) || map.isSolid(lx, by, this.isPlayer) ||
-        map.isSolid(rx, ty, this.isPlayer) || map.isSolid(rx, by, this.isPlayer)) {
-      this.x -= dx;
-    }
+    const ty = Math.floor((this.y + 1) / TILE_SIZE);
+    const by = Math.floor((this.y + this.h - 2) / TILE_SIZE);
+    const hit = dx < 0
+      ? (map.isSolid(lx, ty, this.isPlayer) || map.isSolid(lx, by, this.isPlayer))
+      : (map.isSolid(rx, ty, this.isPlayer) || map.isSolid(rx, by, this.isPlayer));
+    if (hit) this.x -= dx;
     this.x = clamp(this.x, TILE_SIZE, (MAP_COLS - 2) * TILE_SIZE - this.w);
   }
 
   moveY(dy, map) {
     this.y += dy;
-    const tx = Math.floor(this.x / TILE_SIZE);
-    const rx = Math.floor((this.x + this.w - 1) / TILE_SIZE);
+    const tx = Math.floor((this.x + 1) / TILE_SIZE);
+    const rx = Math.floor((this.x + this.w - 2) / TILE_SIZE);
     const ty = Math.floor(this.y / TILE_SIZE);
     const by = Math.floor((this.y + this.h - 1) / TILE_SIZE);
-    if (map.isSolid(tx, ty, this.isPlayer) || map.isSolid(rx, ty, this.isPlayer) ||
-        map.isSolid(tx, by, this.isPlayer) || map.isSolid(rx, by, this.isPlayer)) {
-      this.y -= dy;
-    }
+    const hit = dy < 0
+      ? (map.isSolid(tx, ty, this.isPlayer) || map.isSolid(rx, ty, this.isPlayer))
+      : (map.isSolid(tx, by, this.isPlayer) || map.isSolid(rx, by, this.isPlayer));
+    if (hit) this.y -= dy;
     this.y = clamp(this.y, TILE_SIZE, (MAP_ROWS - 2) * TILE_SIZE - this.h);
   }
 
