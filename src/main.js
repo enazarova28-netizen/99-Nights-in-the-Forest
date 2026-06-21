@@ -34,6 +34,9 @@ class Game {
     this.player2  = null;
     this.crafting = new CraftingSystem(this.player);
     this.ui       = new UI(this);
+    this.r3d      = new Renderer3D();
+    this._enemyIdCounter = 0;
+    this._patchMap();
 
     // Entities
     this.enemies     = [];
@@ -67,6 +70,14 @@ class Game {
 
     this._lastTs = 0;
     requestAnimationFrame(ts => this._loop(ts));
+  }
+
+  _patchMap() {
+    const origSet = this.map.set.bind(this.map);
+    this.map.set = (tx, ty, tile) => {
+      origSet(tx, ty, tile);
+      this.r3d.updateTile(ty * MAP_COLS + tx, tile);
+    };
   }
 
   _setupEvents() {
@@ -430,6 +441,7 @@ class Game {
       onMapInit: tilesB64 => {
         const bin = atob(tilesB64);
         for (let i = 0; i < bin.length; i++) this.map.tiles[i] = bin.charCodeAt(i);
+        this.r3d.initTiles(this.map.tiles);
       },
       onLobbyPlayers: (players, hostUsername) => {
         this._lobbyPlayers = players;
@@ -438,7 +450,10 @@ class Game {
       onTick: state => {
         this._onlineState = state;
         if (state.tileDiffs && state.tileDiffs.length) {
-          for (const { i, tile } of state.tileDiffs) this.map.tiles[i] = tile;
+          for (const { i, tile } of state.tileDiffs) {
+            this.map.tiles[i] = tile;
+            this.r3d.updateTile(i, tile);
+          }
         }
         if (this.state === 'LOBBY_WAIT') this.state = 'ONLINE';
       },
@@ -489,10 +504,13 @@ class Game {
     this.phase       = 'day';
     this.nightNumber = 0;
     this.phaseTimer  = DAY_DURATION;
+    this.r3d.initTiles(this.map.tiles);
   }
 
   _resetGame() {
     this.map      = new TileMap();
+    this._enemyIdCounter = 0;
+    this._patchMap();
     this.player   = new Player(PLAYER_START.tx, PLAYER_START.ty);
     this.player2  = null;
     this.crafting = new CraftingSystem(this.player);
@@ -511,6 +529,7 @@ class Game {
     this.phaseTimer  = DAY_DURATION;
     this.state = 'PLAYING';
     this.nightSurvivedBanner = 0;
+    this.r3d.initTiles(this.map.tiles);
   }
 
   // ── Phase transitions ──────────────────────────────────────────────────────
@@ -998,72 +1017,34 @@ class Game {
 
     const cam = this.camera;
 
-    // Base fill so canvas is never transparent
-    ctx.fillStyle = '#1a3a16';
-    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    // 3D world rendering — 2D canvas is a transparent HUD overlay
+    ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+    this.r3d.setPhase(this.phase);
+    this.r3d.updateCamera(this.player.x, this.player.y, this.player.w, this.player.h);
+    this.r3d.updatePlayers([{
+      username: Net.username || 'you',
+      x: this.player.x, y: this.player.y, w: this.player.w, h: this.player.h,
+      bodyColor: this.player.bodyColor, downed: this.player.downed
+    }]);
+    this.r3d.updateEnemies(this.enemies.filter(e => e.alive).map(e => {
+      if (!e._r3dId) e._r3dId = ++this._enemyIdCounter;
+      return {
+        id: e._r3dId,
+        type: e instanceof BipedalDeer ? 'BipedalDeer' : e instanceof Villager ? 'Villager' : 'Goat',
+        x: e.x, y: e.y, w: e.w, h: e.h
+      };
+    }));
+    this.r3d.updateKids(this.kids.map(k => ({
+      idx: k.kidIdx, x: k.x, y: k.y, w: k.w, h: k.h
+    })));
+    this.r3d.updateProjectiles(this.projectiles.filter(p => p.alive));
+    this.r3d.render();
 
-    // Night tint
-    if (this.phase === 'night') {
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-    }
-
-    // World
-    this.map.draw(ctx, cam);
+    // 2D HUD overlay
     this._drawMineLabels(ctx, cam.x, cam.y, this.player);
-
-    // Night darkness overlay
-    if (this.phase === 'night') {
-      ctx.fillStyle = 'rgba(0,0,20,0.38)';
-      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-    }
-
-    // Projectiles
-    for (const proj of this.projectiles) {
-      if (!proj.alive) continue;
-      const s = cam.toScreen(proj.x, proj.y);
-      ctx.fillStyle = proj.type === 'arrow' ? '#d4a830' : '#44bb44';
-      ctx.fillRect(s.x - proj.w / 2, s.y - proj.h / 2, proj.w, proj.h);
-    }
-
-    // Kids
-    for (const kid of this.kids) {
-      const s = cam.toScreen(kid.x, kid.y);
-      if (s.x > -50 && s.x < CANVAS_W + 50 && s.y > -50 && s.y < CANVAS_H + 50) {
-        kid.draw(ctx, s.x, s.y);
-      }
-    }
-
-    // Enemies
-    for (const e of this.enemies) {
-      if (!e.alive) continue;
-      const s = cam.toScreen(e.x, e.y);
-      if (s.x > -100 && s.x < CANVAS_W + 100 && s.y > -100 && s.y < CANVAS_H + 100) {
-        e.draw(ctx, s.x, s.y);
-      }
-    }
-
-    // Player attack hitbox (debug visual)
-    if (this.player.hitbox) {
-      const hb = this.player.hitbox;
-      const s  = cam.toScreen(hb.x, hb.y);
-      ctx.fillStyle = 'rgba(255,255,100,0.3)';
-      ctx.fillRect(s.x, s.y, hb.w, hb.h);
-    }
-
-    // Player
-    {
-      const s = cam.toScreen(this.player.x, this.player.y);
-      this.player.draw(ctx, s.x, s.y);
-    }
-
-    // HUD
     this.ui.drawHUD(ctx, this);
-
-    // Mobile controls (tablet support)
     this.ui.drawMobileControls(ctx);
 
-    // Night survived banner
     if (this.nightSurvivedBanner > 0) {
       ctx.fillStyle = `rgba(170,170,255,${this.nightSurvivedBanner / 2000})`;
       ctx.font = 'bold 18px monospace';
@@ -1071,7 +1052,6 @@ class Game {
       ctx.fillText('Night survived! +10 HP', CANVAS_W / 2, CANVAS_H / 2 - 20);
     }
 
-    // Crafting overlay
     if (this.state === 'CRAFTING') {
       this.ui.drawCraftingMenu(ctx, this.crafting, this.player);
     }
@@ -1093,114 +1073,22 @@ class Game {
       return;
     }
 
-    // Base fill so canvas is never transparent
-    ctx.fillStyle = '#1a3a16';
-    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-
-    // Night tint
-    if (s.phase === 'night') { ctx.fillStyle='#000'; ctx.fillRect(0,0,CANVAS_W,CANVAS_H); }
-
-    // Find own player in tick to center camera on them
+    // 3D world rendering — 2D canvas is a transparent HUD overlay
+    ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
     const me = s.players.find(p => p.username === Net.username) || s.players[0];
     const camX = me ? clamp(me.x + me.w/2 - CANVAS_W/2, 0, MAP_COLS*TILE_SIZE - CANVAS_W) : 0;
     const camY = me ? clamp(me.y + me.h/2 - CANVAS_H/2, 0, MAP_ROWS*TILE_SIZE - CANVAS_H) : 0;
 
-    // World (reuse local map for display; server manages authoritative state)
-    this.map.draw(ctx, { x: camX, y: camY, sx: 0, sy: 0 });
+    this.r3d.setPhase(s.phase);
+    if (me) this.r3d.updateCamera(me.x, me.y, me.w, me.h);
+    this.r3d.updatePlayers(s.players);
+    this.r3d.updateEnemies(s.enemies);
+    this.r3d.updateKids(s.kids);
+    this.r3d.updateProjectiles(s.projectiles);
+    this.r3d.render();
+
+    // 2D HUD overlay
     this._drawMineLabels(ctx, camX, camY, me);
-
-    if (s.phase === 'night') { ctx.fillStyle='rgba(0,0,20,0.38)'; ctx.fillRect(0,0,CANVAS_W,CANVAS_H); }
-
-    // Projectiles
-    for (const proj of s.projectiles) {
-      const sx = proj.x - camX, sy = proj.y - camY;
-      ctx.fillStyle = proj.type==='arrow' ? '#d4a830' : '#44bb44';
-      ctx.fillRect(sx-proj.w/2, sy-proj.h/2, proj.w||10, proj.h||6);
-    }
-
-    // Kids
-    for (const k of s.kids) {
-      const sx=k.x-camX, sy=k.y-camY;
-      if (!k.rescued) {
-        ctx.fillStyle='#ff0'; ctx.font='bold 14px monospace'; ctx.textAlign='center';
-        ctx.fillText('!', sx+k.w/2, sy-4);
-      }
-      ctx.fillStyle = KID_COLORS[k.idx];
-      ctx.fillRect(sx, sy+8, k.w, k.h-8);
-      ctx.fillStyle='#ffcc99'; ctx.beginPath(); ctx.arc(sx+k.w/2,sy+6,7,0,Math.PI*2); ctx.fill();
-    }
-
-    // Enemies
-    for (const e of s.enemies) {
-      const sx=e.x-camX, sy=e.y-camY;
-      if (sx<-100||sx>CANVAS_W+100||sy<-100||sy>CANVAS_H+100) continue;
-      const ew=e.w||28, eh=e.h||28;
-      if (e.type === 'BipedalDeer') {
-        // Boss — keep large animal look
-        ctx.fillStyle='#8b5e3c'; ctx.fillRect(sx+6,sy+22,ew-12,eh-30);
-        ctx.fillStyle='#a07040'; ctx.fillRect(sx+10,sy+8,22,16);
-        ctx.fillStyle='#6b4226'; ctx.fillRect(sx+8,sy+eh-14,10,14); ctx.fillRect(sx+ew-18,sy+eh-14,10,14);
-        ctx.fillStyle='#555'; ctx.fillRect(sx+12,sy,4,10); ctx.fillRect(sx+ew-16,sy,4,10);
-      } else {
-        const bodyColor = e.type==='Goat' ? '#909090' : '#5a3080';
-        const hatColor  = e.type==='Goat' ? '#555555' : '#3a1a60';
-        const hx = sx + Math.floor(ew/2) - 6;
-        // Body
-        ctx.fillStyle = bodyColor;
-        ctx.fillRect(sx+2, sy+Math.floor(eh*0.42), ew-4, Math.floor(eh*0.58));
-        // Head
-        ctx.fillStyle = '#ffcc99';
-        ctx.fillRect(hx, sy+Math.floor(eh*0.1), 12, 11);
-        // Hat brim
-        ctx.fillStyle = hatColor;
-        ctx.fillRect(hx-2, sy+Math.floor(eh*0.1)-1, 16, 3);
-        ctx.fillRect(hx,   sy+Math.floor(eh*0.1)-7,  12, 7);
-        // Eyes
-        ctx.fillStyle='#222';
-        ctx.fillRect(hx+2, sy+Math.floor(eh*0.1)+3, 2, 2);
-        ctx.fillRect(hx+8, sy+Math.floor(eh*0.1)+3, 2, 2);
-        // Weapon
-        if (e.type==='Goat') {
-          ctx.strokeStyle='#6b4226'; ctx.lineWidth=3;
-          ctx.beginPath(); ctx.moveTo(sx+ew,sy+eh/2); ctx.lineTo(sx+ew+10,sy+eh/2-10); ctx.stroke();
-          ctx.fillStyle='#888'; ctx.beginPath(); ctx.arc(sx+ew+10,sy+eh/2-12,4,0,Math.PI*2); ctx.fill();
-        } else {
-          ctx.fillStyle='#8b4513'; ctx.fillRect(sx+ew,sy+8,3,16);
-          ctx.fillStyle='#ff8800'; ctx.beginPath(); ctx.arc(sx+ew+1,sy+7,4,0,Math.PI*2); ctx.fill();
-        }
-      }
-      // HP bar
-      ctx.fillStyle='#500'; ctx.fillRect(sx,sy-8,ew,4);
-      ctx.fillStyle='#0c0'; ctx.fillRect(sx,sy-8,ew*(e.hp/e.maxHp),4);
-    }
-
-    // All players
-    const PLAYER_COLORS_CLIENT = ['#4488ff','#ff8844','#44cc44','#cc44cc'];
-    for (const p of s.players) {
-      const sx=p.x-camX, sy=p.y-camY;
-      if (p.downed) {
-        ctx.globalAlpha=0.65;
-        ctx.fillStyle=p.bodyColor||PLAYER_COLORS_CLIENT[p.playerIdx]||'#fff';
-        ctx.fillRect(sx-4, sy+p.h/2-2, p.h, 10);
-        ctx.fillStyle='#ffcc99'; ctx.beginPath(); ctx.arc(sx+p.h+2,sy+p.h/2+3,7,0,Math.PI*2); ctx.fill();
-        ctx.fillStyle=Math.floor(Date.now()/400)%2===0?'#f00':'#f88';
-        ctx.font='bold 14px monospace'; ctx.textAlign='center';
-        ctx.fillText('+', sx+p.w/2, sy-4);
-        ctx.globalAlpha=1;
-      } else {
-        ctx.fillStyle=p.bodyColor||PLAYER_COLORS_CLIENT[p.playerIdx]||'#fff';
-        ctx.fillRect(sx, sy+6, p.w, p.h-6);
-        ctx.fillStyle='#ffcc99'; ctx.fillRect(sx+6,sy,12,10);
-      }
-      // Name tag
-      ctx.fillStyle='#fff'; ctx.font='9px monospace'; ctx.textAlign='center';
-      ctx.fillText(p.username, sx+p.w/2, sy-8);
-      // HP bar
-      if (!p.downed) {
-        ctx.fillStyle='#300'; ctx.fillRect(sx,sy-5,p.w,3);
-        ctx.fillStyle='#f00'; ctx.fillRect(sx,sy-5,p.w*(p.hp/p.maxHp),3);
-      }
-    }
 
     // HUD — reuse existing drawHUD but substitute server data
     const fakeGame = {

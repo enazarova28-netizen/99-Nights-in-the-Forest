@@ -8,4 +8,5 @@ body {
   overflow: hidden;
   font-family: 'Courier New', monospace;
 }
-canvas { display: block; border: 2px solid #1a3a1a; cursor: crosshair; }
+canvas { display: block; cursor: crosshair; }
+#game { border: 2px solid #1a3a1a; background: transparent; }
