@@ -14,7 +14,9 @@ class Renderer3D {
     const wrap = canvas2d.parentNode;
 
     const container = document.createElement('div');
-    container.style.cssText = 'position:relative;display:inline-block;';
+    container.style.cssText =
+      `position:relative;display:block;width:${CANVAS_W}px;height:${CANVAS_H}px;` +
+      `border:2px solid #1a3a1a;flex-shrink:0;`;
     wrap.insertBefore(container, canvas2d);
     container.appendChild(this.renderer.domElement);
     container.appendChild(canvas2d);
@@ -22,7 +24,7 @@ class Renderer3D {
     this.renderer.domElement.style.cssText =
       'position:absolute;top:0;left:0;display:block;';
     canvas2d.style.cssText =
-      'position:absolute;top:0;left:0;display:block;pointer-events:auto;';
+      'position:absolute;top:0;left:0;display:block;pointer-events:auto;border:none;';
 
     // Scene
     this.scene = new THREE.Scene();

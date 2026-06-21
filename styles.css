@@ -9,4 +9,4 @@ body {
   font-family: 'Courier New', monospace;
 }
 canvas { display: block; cursor: crosshair; }
-#game { border: 2px solid #1a3a1a; background: transparent; }
+#game { background: transparent; border: none; }
