@@ -908,6 +908,30 @@ class Game {
     }
   }
 
+  _drawPlacementHighlight(ctx, camX, camY, player) {
+    const selId = player.selectedItem();
+    if (!selId) return;
+    const rec = RECIPES.find(r => r.id === selId && r.type === 'placeable');
+    if (!rec || (player.items[selId] || 0) <= 0) return;
+
+    const cx = player.x + player.w / 2 + player.facing.x * TILE_SIZE;
+    const cy = player.y + player.h / 2 + player.facing.y * TILE_SIZE;
+    const tx = Math.floor(cx / TILE_SIZE);
+    const ty = Math.floor(cy / TILE_SIZE);
+
+    const canPlace = this.map.get(tx, ty) === T.GRASS;
+    const sx = tx * TILE_SIZE - camX;
+    const sy = ty * TILE_SIZE - camY;
+
+    ctx.save();
+    ctx.strokeStyle = canPlace ? 'rgba(80,160,255,0.9)' : 'rgba(255,80,80,0.9)';
+    ctx.fillStyle   = canPlace ? 'rgba(80,160,255,0.25)' : 'rgba(255,80,80,0.25)';
+    ctx.lineWidth = 2;
+    ctx.fillRect(sx, sy, TILE_SIZE, TILE_SIZE);
+    ctx.strokeRect(sx, sy, TILE_SIZE, TILE_SIZE);
+    ctx.restore();
+  }
+
   _drawMineLabels(ctx, camX, camY, player) {
     if (!player) return;
     const ptx = Math.floor((player.x + (player.w || 24) / 2) / TILE_SIZE);
@@ -1147,6 +1171,7 @@ class Game {
 
     // 2D HUD overlay
     this._drawMineLabels(ctx, cam.x, cam.y, this.player);
+    this._drawPlacementHighlight(ctx, cam.x, cam.y, this.player);
     this.ui.drawHUD(ctx, this);
     this.ui.drawMobileControls(ctx);
 
