@@ -548,12 +548,12 @@ class Renderer3D {
   // ── Day / night lighting ──────────────────────────────────────────────────
   setPhase(phase) {
     if (phase === 'night') {
-      this.scene.background = new THREE.Color(0x050a14);
-      this.scene.fog = new THREE.Fog(0x050a14, 8, 28);
-      this.ambientLight.color.set(0x1a2a4a);
-      this.ambientLight.intensity = 0.4;
-      this.sunLight.color.set(0x2244aa);
-      this.sunLight.intensity = 0.15;
+      this.scene.background = new THREE.Color(0x0d1a30);
+      this.scene.fog = new THREE.Fog(0x0d1a30, 12, 38);
+      this.ambientLight.color.set(0x3a5a8a);
+      this.ambientLight.intensity = 0.7;
+      this.sunLight.color.set(0x4466cc);
+      this.sunLight.intensity = 0.3;
     } else {
       this.scene.background = new THREE.Color(0x7ab8f5);
       this.scene.fog = new THREE.Fog(0x7ab8f5, 20, 60);
