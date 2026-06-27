@@ -909,7 +909,9 @@ class Game {
   }
 
   _drawPlacementHighlight(ctx, camX, camY, player) {
-    const selId = player.selectedItem();
+    const selId = typeof player.selectedItem === 'function'
+      ? player.selectedItem()
+      : (player.hotbar || [])[player.slot || 0];
     if (!selId) return;
     const rec = RECIPES.find(r => r.id === selId && r.type === 'placeable');
     if (!rec || (player.items[selId] || 0) <= 0) return;
@@ -1219,6 +1221,10 @@ class Game {
 
     // 2D HUD overlay
     this._drawMineLabels(ctx, camX, camY, me);
+    if (me) {
+      const meWithFacing = Object.assign({}, me, { facing: this.player.facing, items: me.items || {} });
+      this._drawPlacementHighlight(ctx, camX, camY, meWithFacing);
+    }
 
     // HUD — reuse existing drawHUD but substitute server data
     const fakeGame = {
