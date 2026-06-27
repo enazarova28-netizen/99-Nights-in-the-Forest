@@ -183,6 +183,16 @@ class Game {
       } else if (e.code === 'KeyE') {
         if      (this.state === 'PLAYING')  this._doInteract();
         else if (this.state === 'CRAFTING') this.state = 'PLAYING';
+      } else if (e.code === 'KeyO' && this.state === 'PLAYING') {
+        this._doOpenCrafting();
+      } else if (e.code === 'KeyP' && this.state === 'PLAYING') {
+        this._doPlaceItem();
+      } else if (e.code === 'KeyC' && this.state === 'PLAYING') {
+        this._doCutTree();
+      } else if (e.code === 'KeyR' && this.state === 'PLAYING') {
+        this._doRescueKid();
+      } else if (e.code === 'KeyH' && this.state === 'PLAYING') {
+        this._doOpenChest();
       } else if (e.code === 'Enter' && this.state === 'PLAYING') {
         this._doUseDoor();
       }
@@ -800,6 +810,101 @@ class Game {
     const pdy = p.y + p.h / 2;
     if (distance({ x: pdx, y: pdy }, { x: ctx, y: cty }) < TILE_SIZE * 4) {
       this.state = 'CRAFTING';
+    }
+  }
+
+  _doOpenCrafting() {
+    const p = this.player;
+    const ctx2 = CRAFTING_TABLE_POS.tx * TILE_SIZE + TILE_SIZE / 2;
+    const cty2 = CRAFTING_TABLE_POS.ty * TILE_SIZE + TILE_SIZE / 2;
+    if (distance({ x: p.x + p.w / 2, y: p.y + p.h / 2 }, { x: ctx2, y: cty2 }) < TILE_SIZE * 4) {
+      this.state = 'CRAFTING';
+    } else {
+      this.crafting.feedback = 'Too far from crafting table';
+      this.crafting.feedbackTimer = 1200;
+    }
+  }
+
+  _doPlaceItem() {
+    const p = this.player;
+    const selId = p.selectedItem();
+    if (!selId) return;
+    const rec = RECIPES.find(r => r.id === selId && r.type === 'placeable');
+    if (rec && (p.items[selId] || 0) > 0) {
+      this.crafting.placeItem(p, this.map);
+    }
+  }
+
+  _doCutTree() {
+    const p = this.player;
+    const pcx = Math.floor((p.x + p.w / 2) / TILE_SIZE);
+    const pcy = Math.floor((p.y + p.h / 2) / TILE_SIZE);
+    const faceTx = Math.floor((p.x + p.w / 2 + p.facing.x * TILE_SIZE * 0.9) / TILE_SIZE);
+    const faceTy = Math.floor((p.y + p.h / 2 + p.facing.y * TILE_SIZE * 0.9) / TILE_SIZE);
+    const candidates = [
+      { tx: faceTx, ty: faceTy },
+      { tx: pcx, ty: pcy - 1 },
+      { tx: pcx, ty: pcy + 1 },
+      { tx: pcx - 1, ty: pcy },
+      { tx: pcx + 1, ty: pcy },
+    ];
+    for (const c of candidates) {
+      if (this.map.get(c.tx, c.ty) === T.TREE) {
+        const count = p.hasAxe ? 2 : 1;
+        p.addRes('wood', count);
+        this.map.chopTree(c.tx, c.ty);
+        this.crafting.feedback = `+${count} Wood`;
+        this.crafting.feedbackTimer = 1400;
+        return;
+      }
+    }
+  }
+
+  _doRescueKid() {
+    const p = this.player;
+    for (const kid of this.kids) {
+      if (!kid.rescued && distance({ x: p.x, y: p.y }, kid) < TILE_SIZE * 2) {
+        kid.rescued = true;
+        this.kidsRescued++;
+        this.announcementText  = `Kid ${this.kidsRescued}/4 rescued!`;
+        this.announcementTimer = 2000;
+        this._onKidRescued();
+        return;
+      }
+    }
+  }
+
+  _doOpenChest() {
+    const p = this.player;
+    const pcx = Math.floor((p.x + p.w / 2) / TILE_SIZE);
+    const pcy = Math.floor((p.y + p.h / 2) / TILE_SIZE);
+    const faceTx = Math.floor((p.x + p.w / 2 + p.facing.x * TILE_SIZE * 0.9) / TILE_SIZE);
+    const faceTy = Math.floor((p.y + p.h / 2 + p.facing.y * TILE_SIZE * 0.9) / TILE_SIZE);
+    const candidates = [
+      { tx: faceTx, ty: faceTy },
+      { tx: pcx, ty: pcy - 1 },
+      { tx: pcx, ty: pcy + 1 },
+      { tx: pcx - 1, ty: pcy },
+      { tx: pcx + 1, ty: pcy },
+    ];
+    for (const c of candidates) {
+      if (this.map.get(c.tx, c.ty) === T.CHEST) {
+        const h = n => { const v = Math.sin(n) * 43758.5; return v - Math.floor(v); };
+        const s = c.tx * 100 + c.ty;
+        const wood  = 3 + Math.floor(h(s * 13.7) * 6);
+        const stone = h(s * 27.3) > 0.4 ? 1 + Math.floor(h(s * 53.1) * 4) : 0;
+        const herb  = h(s * 41.7) > 0.6 ? 1 + Math.floor(h(s * 71.9) * 3) : 0;
+        p.addRes('wood',  wood);
+        if (stone) p.addRes('stone', stone);
+        if (herb)  p.addRes('herb',  herb);
+        this.map.set(c.tx, c.ty, T.GRASS);
+        let msg = `+${wood} Wood`;
+        if (stone) msg += `, +${stone} Stone`;
+        if (herb)  msg += `, +${herb} Herb`;
+        this.crafting.feedback = msg;
+        this.crafting.feedbackTimer = 2000;
+        return;
+      }
     }
   }
 
