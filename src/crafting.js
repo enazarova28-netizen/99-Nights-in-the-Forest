@@ -16,7 +16,7 @@ class CraftingSystem {
 
   craft(recipeId) {
     const rec = RECIPES.find(r => r.id === recipeId);
-    if (!rec) return false;
+    if (!rec || rec.gatherOnly) return false; // gather-only items can't be crafted
     if (!this.canAfford(rec)) {
       this.feedback = 'Not enough materials!';
       this.feedbackTimer = 2000;
@@ -41,6 +41,7 @@ class CraftingSystem {
       this.feedback = `Crafted: ${rec.name}`;
     }
     this.feedbackTimer = 2000;
+    if (typeof Sfx !== 'undefined') Sfx.craft();
     return true;
   }
 
@@ -72,6 +73,7 @@ class CraftingSystem {
     player.removeItem(id, 1);
     this.feedback = `Placed ${rec.name}`;
     this.feedbackTimer = 1500;
+    if (typeof Sfx !== 'undefined') Sfx.place();
     return true;
   }
 

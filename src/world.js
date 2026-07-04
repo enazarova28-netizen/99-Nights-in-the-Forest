@@ -4,7 +4,37 @@ class TileMap {
     this.rows  = MAP_ROWS;
     this.tiles = new Uint8Array(this.cols * this.rows);
     this.stumpTimers = {};
+    // Kid spawns are the interior centres of the 4 corner mines — computed
+    // from the same deterministic math as generation, so solo and
+    // multiplayer agree.
+    this.kidSpawns = this._computeKidSpawns();
     this.generate();
+  }
+
+  // Deterministic placement of the mine in zone (zx, zy) — must stay
+  // identical to server/gameRoom.js ServerTileMap._mineSpec.
+  _mineSpec(zx, zy) {
+    const ZONES_X = 4, ZONES_Y = 4;
+    const ZONE_W  = Math.floor(MAP_COLS / ZONES_X);
+    const ZONE_H  = Math.floor(MAP_ROWS / ZONES_Y);
+    const seed = zx * 13 + zy * 7;
+    const frac = n => { const v = Math.sin(n * 47.3 + seed * 1.9) * 43758.5; return v - Math.floor(v); };
+    let bx = Math.floor(zx * ZONE_W + 2 + frac(1) * (ZONE_W - 14));
+    let by = Math.floor(zy * ZONE_H + 2 + frac(2) * (ZONE_H - 12));
+    bx = Math.max(2, Math.min(bx, MAP_COLS - 12));
+    by = Math.max(2, Math.min(by, MAP_ROWS - 10));
+    const w = 11, h = 9;
+    bx = Math.max(2, Math.min(bx, MAP_COLS - w - 3));
+    by = Math.max(2, Math.min(by, MAP_ROWS - h - 4));
+    return { bx, by, w, h, cx: bx + Math.floor(w / 2), cy: by + Math.floor(h / 2) };
+  }
+
+  _computeKidSpawns() {
+    // Corner zones (NW, NE, SW, SE) — matches KID_COLORS order
+    return [[0, 0], [3, 0], [0, 3], [3, 3]].map(([zx, zy]) => {
+      const s = this._mineSpec(zx, zy);
+      return { tx: s.cx, ty: s.cy };
+    });
   }
 
   idx(tx, ty) { return ty * this.cols + tx; }
@@ -57,21 +87,29 @@ class TileMap {
       }
     }
 
+    // Scatter berry bushes (~1.5%) — the food source
+    for (let y = 2; y < this.rows - 2; y++) {
+      for (let x = 2; x < this.cols - 2; x++) {
+        if (this.get(x, y) === T.GRASS && Math.random() < 0.015) this.set(x, y, T.BERRY_BUSH);
+      }
+    }
+
     // Clear starting area
     this._clearArea(PLAYER_START.tx, PLAYER_START.ty, 5);
     this.set(CRAFTING_TABLE_POS.tx, CRAFTING_TABLE_POS.ty, T.CRAFTING_TABLE);
     // Pre-placed campfire so the player can see one immediately
     this.set(PLAYER_START.tx + 2, PLAYER_START.ty - 2, T.CAMPFIRE);
 
-    // Clear around each kid
-    for (const p of KID_POSITIONS) this._clearArea(p.tx, p.ty, 3);
-
-    // Houses and mines — deterministic zone grid so solo matches multiplayer layout
+    // Houses and mines — deterministic zone grid so solo matches multiplayer
+    // layout. The 4 corner zones always hold a mine with a kid inside.
     const ZONES_X = 4, ZONES_Y = 4;
     const ZONE_W  = Math.floor(this.cols / ZONES_X);
     const ZONE_H  = Math.floor(this.rows / ZONES_Y);
     for (let zy = 0; zy < ZONES_Y; zy++) {
       for (let zx = 0; zx < ZONES_X; zx++) {
+        const corner = (zx === 0 || zx === ZONES_X - 1) && (zy === 0 || zy === ZONES_Y - 1);
+        if (corner) { this._genMine(zx, zy); continue; }
+
         const zoneCx = zx * ZONE_W + Math.floor(ZONE_W / 2);
         const zoneCy = zy * ZONE_H + Math.floor(ZONE_H / 2);
         if (Math.hypot(zoneCx - PLAYER_START.tx, zoneCy - PLAYER_START.ty) < 14) continue;
@@ -85,7 +123,7 @@ class TileMap {
         by = Math.max(2, Math.min(by, this.rows - 10));
 
         if (frac(3) < 0.65) this._genHouse(bx, by, seed);
-        else                 this._genMine(bx, by, seed);
+        else                 this._genMine(zx, zy);
       }
     }
   }
@@ -126,41 +164,39 @@ class TileMap {
     this.set(bx + Math.floor(w / 2), by + Math.floor(h / 2), T.CHEST);
   }
 
-  _genMine(bx, by, seed) {
-    const w = 5, h = 4;
-    bx = Math.max(2, Math.min(bx, this.cols - w - 3));
-    by = Math.max(2, Math.min(by, this.rows - h - 4));
+  // Enterable mine cave: rock shell, dark floor, 3-tile opening at the
+  // south side, a chest inside. Corner-zone mines hold a kidnapped kid.
+  _genMine(zx, zy) {
+    const { bx, by, w, h } = this._mineSpec(zx, zy);
 
-    // Clear surroundings
-    for (let dy = -1; dy <= h + 3; dy++) {
-      for (let dx = -1; dx <= w + 1; dx++) {
+    // Clear surroundings so the cave is reachable
+    for (let dy = -1; dy <= h + 2; dy++) {
+      for (let dx = -1; dx <= w; dx++) {
         const tx = bx + dx, ty = by + dy;
         if (tx < 0 || ty < 0 || tx >= this.cols || ty >= this.rows) continue;
         if (dx >= 0 && dx < w && dy >= 0 && dy < h) continue;
         const t = this.get(tx, ty);
-        if (t === T.TREE || t === T.ROCK || t === T.HERB) this.set(tx, ty, T.GRASS);
+        if (t === T.TREE || t === T.ROCK || t === T.HERB || t === T.BERRY_BUSH) this.set(tx, ty, T.GRASS);
       }
     }
 
-    // Solid mine block
+    // Rock shell with dark cave floor inside
     for (let ty = by; ty < by + h; ty++) {
       for (let tx = bx; tx < bx + w; tx++) {
-        this.set(tx, ty, T.WOOD_WALL);
+        const wall = tx === bx || tx === bx + w - 1 || ty === by || ty === by + h - 1;
+        this.set(tx, ty, wall ? T.CAVE_WALL : T.CAVE_FLOOR);
       }
     }
 
-    // Mine entrance tile at south-center
+    // 3-tile-wide opening at south-centre (marker tile in the middle)
     const entrTx = bx + Math.floor(w / 2);
-    this.set(entrTx, by + h - 1, T.MINE_ENTRANCE);
+    const southY = by + h - 1;
+    this.set(entrTx - 1, southY, T.CAVE_FLOOR);
+    this.set(entrTx,     southY, T.MINE_ENTRANCE);
+    this.set(entrTx + 1, southY, T.CAVE_FLOOR);
 
-    // Chest just south of mine
-    const chestTy = by + h + 1;
-    if (chestTy < this.rows - 1) {
-      this.set(entrTx, by + h, T.GRASS);
-      this.set(entrTx, chestTy, T.CHEST);
-      if (entrTx > 0)              this.set(entrTx - 1, chestTy, T.GRASS);
-      if (entrTx < this.cols - 1)  this.set(entrTx + 1, chestTy, T.GRASS);
-    }
+    // Chest in the north-west corner of the cave
+    this.set(bx + 2, by + 2, T.CHEST);
   }
 
   _clearArea(cx, cy, r) {

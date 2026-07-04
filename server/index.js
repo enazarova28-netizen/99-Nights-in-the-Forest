@@ -14,9 +14,13 @@ const PORT = process.env.PORT || 3000;
 // ── Middleware ────────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '2mb' }));
 
-// Serve the game's static files from the parent directory (works locally and on Railway)
-const staticRoot = path.join(__dirname, '..');
-app.use(express.static(staticRoot));
+// Serve ONLY the client files. Serving the whole project root would expose
+// server source and server/gamedata.json (user credentials) to anyone.
+const clientRoot = path.join(__dirname, '..');
+app.use('/src', express.static(path.join(clientRoot, 'src')));
+app.get('/',           (req, res) => res.sendFile(path.join(clientRoot, 'index.html')));
+app.get('/index.html', (req, res) => res.sendFile(path.join(clientRoot, 'index.html')));
+app.get('/styles.css', (req, res) => res.sendFile(path.join(clientRoot, 'styles.css')));
 
 // ── REST routes ───────────────────────────────────────────────────────────────
 app.use('/api', authRouter);
@@ -61,17 +65,18 @@ wss.on('connection', (ws, req) => {
 
   const room = lobby.roomState;
 
-  // Evict stale connection for same username (page-refresh / reconnect)
+  // Evict stale connection for same username (page-refresh / reconnect).
+  // Keep the existing ServerPlayer so a refresh doesn't wipe inventory/position.
   const stale = lobby.players.find(p => p.username === user.username);
+  let ok;
   if (stale) {
     try { stale.ws.close(4000, 'Replaced by new connection'); } catch {}
-    room.removePlayer(user.username);
     lobby.players = lobby.players.filter(p => p.username !== user.username);
     console.log(`[room ${lobbyId}] evicted stale connection for ${user.username}`);
+    ok = room.reconnectPlayer(user.username, ws) || room.addPlayer(user.username, ws);
+  } else {
+    ok = room.addPlayer(user.username, ws);
   }
-
-  // Register player in the room
-  const ok = room.addPlayer(user.username, ws);
   if (!ok) { ws.close(4003, 'Room full'); return; }
 
   // Track this connection for cleanup
@@ -101,19 +106,28 @@ wss.on('connection', (ws, req) => {
 
   // ── Disconnection ───────────────────────────────────────────────────────
   ws.on('close', () => {
+    // Ignore close events from sockets that were already replaced by a
+    // newer connection (page refresh) — cleaning up here would remove the
+    // reconnected player.
+    const entry = lobby.players.find(p => p.username === user.username);
+    if (!entry || entry.ws !== ws) return;
+
     console.log(`[room ${lobbyId}] ${user.username} disconnected`);
+
+    // Save for the leaving player BEFORE removing them — the snapshot must
+    // still contain their inventory. Only save once the game has started,
+    // otherwise a lobby-screen exit would overwrite real progress.
+    if (room._tickInterval) {
+      const saveData = room.toSaveData();
+      const dbUser = getUserByUsername(user.username);
+      if (dbUser) upsertSave(dbUser.id, saveData);
+    }
 
     room.removePlayer(user.username);
     lobby.players = lobby.players.filter(p => p.username !== user.username);
 
     if (lobby.players.length === 0) {
-      // Save and tear down
-      const saveData = room.toSaveData();
       room.stop();
-      for (const sp of saveData.players) {
-        const dbUser = getUserByUsername(sp.username);
-        if (dbUser) upsertSave(dbUser.id, saveData);
-      }
       lobbies.delete(lobbyId);
       console.log(`[room ${lobbyId}] empty — saved, stopped, and removed`);
     }

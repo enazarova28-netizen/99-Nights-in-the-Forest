@@ -192,9 +192,22 @@ class BipedalDeer extends Enemy {
 
     this.retreated    = false;
     this.returnNight  = 0;
+    this.hasReturned  = false; // true after coming back from its retreat
   }
 
-  getPhase() { return this.hp <= this.maxHp * 0.5 ? 2 : 1; }
+  getPhase() { return (this.hasReturned || this.hp <= this.maxHp * 0.5) ? 2 : 1; }
+
+  // First defeat makes the Warden retreat (it returns 3 nights later,
+  // enraged); only the second defeat is final.
+  takeDamage(amt) {
+    if (this.retreated) return;
+    super.takeDamage(amt);
+    if (!this.alive && !this.hasReturned) {
+      this.alive = true;
+      this.retreated = true;
+      this.hp = 0;
+    }
+  }
 
   update(dt, player, map, projectiles, nightNum, spawnGoatFn) {
     if (!this.alive || this.retreated) return;
@@ -238,12 +251,6 @@ class BipedalDeer extends Enemy {
     }
 
     this.tryHit(player);
-
-    if (this.hp <= 0) {
-      this.hp = 0;
-      this.retreated = true;
-      this.returnNight = nightNum + 3;
-    }
   }
 
   _shootThorns(player, projectiles) {

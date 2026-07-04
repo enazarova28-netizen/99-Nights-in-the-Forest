@@ -4,7 +4,12 @@ const jwt      = require('jsonwebtoken');
 const { createUser, getUserByUsername, getUserById, getSave, upsertSave } = require('./db');
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'forest-secret-key-change-in-prod';
+// In production a real secret is required — refusing to start beats silently
+// signing every token with a publicly known string.
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET environment variable must be set in production');
+}
+const JWT_SECRET = process.env.JWT_SECRET || 'forest-dev-secret';
 const SALT_ROUNDS = 10;
 
 // ── Middleware ────────────────────────────────────────────────────────────────

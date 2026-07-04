@@ -1,3 +1,7 @@
+// Recipes shown in the crafting menu (gather-only items like berries are
+// found in the world, not crafted)
+const CRAFT_RECIPES = RECIPES.filter(r => !r.gatherOnly);
+
 class UI {
   constructor(game) {
     this.game = game;
@@ -11,7 +15,7 @@ class UI {
 
     // Dark overlay strip top
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(0, 0, CANVAS_W, 44);
+    ctx.fillRect(0, 0, CANVAS_W, 52);
 
     // HP bar
     ctx.fillStyle = '#500';
@@ -24,7 +28,25 @@ class UI {
     ctx.fillStyle = '#fff';
     ctx.font = '10px monospace';
     ctx.textAlign = 'left';
-    ctx.fillText(`HP  ${p.hp}/${p.maxHp}`, 14, 22);
+    ctx.fillText(`HP  ${Math.ceil(p.hp)}/${p.maxHp}`, 14, 22);
+
+    // Hunger bar (below HP)
+    const hunger    = p.hunger    ?? 100;
+    const maxHunger = p.maxHunger ?? 100;
+    ctx.fillStyle = '#3a2600';
+    ctx.fillRect(10, 28, 140, 9);
+    ctx.fillStyle = hunger > 25 ? '#ff9d2e' : '#ff5522';
+    ctx.fillRect(10, 28, 140 * (hunger / maxHunger), 9);
+    ctx.strokeStyle = '#886644';
+    ctx.strokeRect(10, 28, 140, 9);
+    ctx.fillStyle = '#fff';
+    ctx.font = '8px monospace';
+    ctx.fillText(`FOOD ${Math.ceil(hunger)}`, 14, 35.5);
+    if (hunger <= 0 && Math.floor(Date.now() / 400) % 2 === 0) {
+      ctx.fillStyle = '#ff4422';
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText('STARVING! Eat berries [Space]', 158, 36);
+    }
 
     // Night + phase
     const phaseLabel = game.phase === 'day' ? '☀ DAY' : '☾ NIGHT';
@@ -40,10 +62,10 @@ class UI {
     ctx.textAlign = 'right';
     ctx.fillText(`Kids: ${game.kidsRescued}/4`, CANVAS_W - 10, 24);
 
-    // Signed-in username (top-left, below HP bar)
+    // Signed-in username (top-left, below the bars)
     if (typeof Net !== 'undefined' && Net.username) {
       ctx.fillStyle = '#44aa44'; ctx.font = '10px monospace'; ctx.textAlign = 'left';
-      ctx.fillText('● ' + Net.username, 10, 38);
+      ctx.fillText('● ' + Net.username, 10, 48);
     }
 
     // Wave indicator
@@ -51,7 +73,7 @@ class UI {
       ctx.fillStyle = '#ff4444';
       ctx.font = 'bold 13px monospace';
       ctx.textAlign = 'right';
-      ctx.fillText(`⚡ Wave ${game.currentWave}/10`, CANVAS_W - 10, 40);
+      ctx.fillText(`⚡ Wave ${game.currentWave}/${game.waveMax || 10}`, CANVAS_W - 10, 40);
     }
 
     // Resources panel (bottom-left)
@@ -100,16 +122,13 @@ class UI {
       ctx.font = 'bold 28px monospace';
       ctx.textAlign = 'center';
       ctx.fillText(game.announcementText, CANVAS_W / 2, CANVAS_H / 2 + 10);
-      game.announcementTimer -= 16;
+      // (timer is decremented with dt in Game._update, not here)
     }
   }
 
   drawHotbar(ctx, p) {
-    const slotW = 48;
-    const slotH = 48;
-    const total = 6;
-    const startX = CANVAS_W / 2 - (total * slotW) / 2;
-    const startY = CANVAS_H - slotH - 4;
+    // Layout shared with main.js click hit-testing via HOTBAR constant
+    const { slotW, slotH, count: total, x: startX, y: startY } = HOTBAR;
 
     for (let i = 0; i < total; i++) {
       const x = startX + i * slotW;
@@ -129,21 +148,26 @@ class UI {
       const id = p.hotbar[i];
       if (id) {
         const cnt = p.items[id] || 0;
+        // Canvas fillText ignores '\n' — draw the recipe name word by word
+        const rec   = RECIPES.find(r => r.id === id);
+        const words = (rec ? rec.name : id).split(' ').slice(0, 2);
         ctx.fillStyle = '#fff';
-        ctx.font = '10px monospace';
+        ctx.font = '9px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(id.replace('_', '\n'), x + slotW / 2 - 1, y + 28);
+        words.forEach((wd, wi) => {
+          ctx.fillText(wd, x + slotW / 2 - 1, y + 21 + wi * 9);
+        });
         ctx.fillStyle = '#ffd700';
         ctx.font = 'bold 10px monospace';
-        ctx.fillText(`×${cnt}`, x + slotW / 2 - 1, y + 40);
+        ctx.fillText(`×${cnt}`, x + slotW / 2 - 1, y + 41);
       }
     }
   }
 
   drawMobileControls(ctx) {
-    // Mobile D-pad (bottom-left, higher up)
-    const padSize = 20;
-    const padX = 16, padY = CANVAS_H - 170;
+    // Mobile D-pad — layout shared with main.js hit-testing via DPAD constant
+    const padSize = DPAD.size;
+    const padX = DPAD.x, padY = DPAD.y;
     ctx.fillStyle = 'rgba(255,255,255,0.15)';
     ctx.fillRect(padX, padY, padSize*3, padSize*3);
     ctx.strokeStyle = 'rgba(255,255,255,0.3)';
@@ -166,8 +190,8 @@ class UI {
       ctx.fillText(d.label, d.x + padSize/2, d.y + padSize/2 + 5);
     });
 
-    // Action buttons (bottom-right, higher up)
-    const btnW = 44, btnH = 32, gap = 8;
+    // Action buttons — layout shared with main.js hit-testing via TOUCH_BTN
+    const { w: btnW, h: btnH, gap } = TOUCH_BTN;
     const attackX = CANVAS_W - btnW - 8;
     const attackY = CANVAS_H - btnH*3 - gap*2 - 8;
     const interactX = CANVAS_W - btnW*2 - gap - 8;
@@ -247,7 +271,7 @@ class UI {
     ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(PX + listW + 16, PY + 44); ctx.lineTo(PX + listW + 16, PY + PH - 8); ctx.stroke();
 
-    RECIPES.forEach((rec, i) => {
+    CRAFT_RECIPES.forEach((rec, i) => {
       const y      = listY + i * rowH;
       const afford = this._craftCanAfford(rec, player);
       const sel    = i === this.selectedRecIdx;
@@ -269,7 +293,7 @@ class UI {
 
     // ── Right panel: selected recipe details + CRAFT button ───────────────
     const rpX = PX + listW + 24, rpY = PY + 44, rpW = PW - listW - 32;
-    const rec = RECIPES[this.selectedRecIdx];
+    const rec = CRAFT_RECIPES[this.selectedRecIdx];
 
     if (!rec) {
       ctx.fillStyle = '#888'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
@@ -338,7 +362,7 @@ class UI {
 
     // Recipe list (left panel)
     const listX = PX + 8, listW = 310, listY = PY + 44, rowH = 38;
-    RECIPES.forEach((rec, i) => {
+    CRAFT_RECIPES.forEach((rec, i) => {
       const y = listY + i * rowH;
       if (mx >= listX && mx <= listX + listW && my >= y && my <= y + rowH - 2) {
         this.selectedRecIdx = i;
@@ -346,7 +370,7 @@ class UI {
     });
 
     // CRAFT button (right panel, bottom)
-    const rec = RECIPES[this.selectedRecIdx];
+    const rec = CRAFT_RECIPES[this.selectedRecIdx];
     if (rec) {
       const rpX   = PX + listW + 24;
       const rpW   = PW - listW - 32;
@@ -398,13 +422,13 @@ class UI {
 
     ctx.fillStyle = '#aaffaa';
     ctx.font = '16px monospace';
-    ctx.fillText('Survive 99 nights. Save the 4 kids.', CANVAS_W / 2, 165);
+    ctx.fillText('Survive 99 nights. Rescue the 4 kids from the mines. Stay fed.', CANVAS_W / 2, 165);
 
     ctx.fillStyle = '#fff';
     ctx.font = '13px monospace';
     const controls = [
-      'WASD — Move    Space — Attack    E — Interact / Gather',
-      '1-6 — Hotbar    ESC — Open crafting table',
+      'WASD / Arrows — Move    Space — Attack    E — Interact / Gather',
+      '1-6 — Hotbar    O — Crafting (near table)    Enter — Use door',
     ];
     controls.forEach((line, i) => ctx.fillText(line, CANVAS_W / 2, 212 + i * 22));
 

@@ -13,10 +13,17 @@ const T = {
   CRAFTING_TABLE:4, HERB:5,
   WOOD_WALL:6, STONE_WALL:7, DOOR:8,
   CAMPFIRE:9, TRAP:10, FARM:11,
-  CHEST:12, MINE_ENTRANCE:13
+  CHEST:12, MINE_ENTRANCE:13,
+  CAVE_WALL:14, CAVE_FLOOR:15, BERRY_BUSH:16
 };
 
-const TILE_SOLID = new Set([T.TREE, T.ROCK, T.WOOD_WALL, T.STONE_WALL, T.MINE_ENTRANCE, T.CHEST]);
+// MINE_ENTRANCE is an open cave mouth — walkable, so mines can be entered.
+const TILE_SOLID = new Set([T.TREE, T.ROCK, T.WOOD_WALL, T.STONE_WALL, T.CHEST, T.CAVE_WALL]);
+
+// Hunger (mirrors src/constants.js)
+const HUNGER_DRAIN_PER_MS = 100 / 240000;
+const STARVE_INTERVAL_MS  = 3000;
+const STARVE_DAMAGE       = 4;
 
 const RECIPES = [
   { id:'wood_wall',  name:'Wood Wall',   cost:{wood:3},           type:'placeable', tile:T.WOOD_WALL  },
@@ -30,11 +37,11 @@ const RECIPES = [
   { id:'bow',        name:'Bow',         cost:{wood:3,herb:2},    type:'weapon'   },
   { id:'arrow',      name:'Arrow x5',    cost:{wood:1,stone:1},   type:'ammo', gives:5 },
   { id:'bandage',    name:'Bandage',     cost:{herb:2},           type:'consumable', heal:25 },
+  // gatherOnly items are found in the world, never crafted
+  { id:'berry',      name:'Berries',     cost:{},                 type:'consumable', hunger:25, gatherOnly:true },
 ];
 
-const KID_POSITIONS = [
-  { tx:15,ty:15 }, { tx:64,ty:15 }, { tx:15,ty:64 }, { tx:64,ty:64 }
-];
+// Kid spawn positions come from the generated corner mines (map.kidSpawns).
 const CRAFTING_TABLE_POS = { tx:38, ty:40 };
 const PLAYER_START       = { tx:40, ty:40 };
 const PLAYER_COLORS      = ['#4488ff','#ff8844','#44cc44','#cc44cc'];
@@ -60,6 +67,9 @@ class ServerTileMap {
   constructor(tilesBase64 = null) {
     this.stumpTimers = {};
     this.dirty = [];
+    // Kid spawns are deterministic (corner-mine centres), so they can be
+    // recomputed even when the tiles come from a save.
+    this.kidSpawns = this._computeKidSpawns();
     if (tilesBase64) {
       const buf = Buffer.from(tilesBase64, 'base64');
       this.tiles = new Uint8Array(buf);
@@ -68,6 +78,32 @@ class ServerTileMap {
       this._generate();
     }
     this.dirty = []; // clear any dirty entries from map generation
+  }
+
+  // Deterministic placement of the mine in zone (zx, zy) — must stay
+  // identical to src/world.js TileMap._mineSpec.
+  _mineSpec(zx, zy) {
+    const ZONES_X = 4, ZONES_Y = 4;
+    const ZONE_W  = Math.floor(MAP_COLS / ZONES_X);
+    const ZONE_H  = Math.floor(MAP_ROWS / ZONES_Y);
+    const seed = zx * 13 + zy * 7;
+    const frac = n => { const v = Math.sin(n * 47.3 + seed * 1.9) * 43758.5; return v - Math.floor(v); };
+    let bx = Math.floor(zx * ZONE_W + 2 + frac(1) * (ZONE_W - 14));
+    let by = Math.floor(zy * ZONE_H + 2 + frac(2) * (ZONE_H - 12));
+    bx = Math.max(2, Math.min(bx, MAP_COLS - 12));
+    by = Math.max(2, Math.min(by, MAP_ROWS - 10));
+    const w = 11, h = 9;
+    bx = Math.max(2, Math.min(bx, MAP_COLS - w - 3));
+    by = Math.max(2, Math.min(by, MAP_ROWS - h - 4));
+    return { bx, by, w, h, cx: bx + Math.floor(w / 2), cy: by + Math.floor(h / 2) };
+  }
+
+  _computeKidSpawns() {
+    // Corner zones (NW, NE, SW, SE) — matches KID_COLORS order client-side
+    return [[0, 0], [3, 0], [0, 3], [3, 3]].map(([zx, zy]) => {
+      const s = this._mineSpec(zx, zy);
+      return { tx: s.cx, ty: s.cy };
+    });
   }
 
   idx(tx, ty) { return ty * MAP_COLS + tx; }
@@ -170,24 +206,27 @@ class ServerTileMap {
         if ((v - Math.floor(v)) < 0.03) this.set(tx, ty, T.HERB);
       }
     }
-    // Crafting table
-    this.set(CRAFTING_TABLE_POS.tx, CRAFTING_TABLE_POS.ty, T.CRAFTING_TABLE);
-    // Kid positions — clear surrounding tiles
-    for (const p of KID_POSITIONS) {
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          if (this.get(p.tx+dx, p.ty+dy) !== T.CRAFTING_TABLE)
-            this.set(p.tx+dx, p.ty+dy, T.GRASS);
-        }
+    // Berry bushes (~1.5%) — the food source
+    for (let ty = 2; ty < MAP_ROWS-2; ty++) {
+      for (let tx = 2; tx < MAP_COLS-2; tx++) {
+        if (this.get(tx, ty) !== T.GRASS) continue;
+        const v = Math.sin(tx * 311.9 + ty * 67.3) * 51987.3;
+        if ((v - Math.floor(v)) < 0.015) this.set(tx, ty, T.BERRY_BUSH);
       }
     }
+    // Crafting table
+    this.set(CRAFTING_TABLE_POS.tx, CRAFTING_TABLE_POS.ty, T.CRAFTING_TABLE);
 
-    // Houses and mines — zone grid (matches client world.js generation)
+    // Houses and mines — zone grid (matches client world.js generation).
+    // The 4 corner zones always hold a mine with a kid inside.
     const ZONES_X = 4, ZONES_Y = 4;
     const ZONE_W  = Math.floor(MAP_COLS / ZONES_X);
     const ZONE_H  = Math.floor(MAP_ROWS / ZONES_Y);
     for (let zy = 0; zy < ZONES_Y; zy++) {
       for (let zx = 0; zx < ZONES_X; zx++) {
+        const corner = (zx === 0 || zx === ZONES_X - 1) && (zy === 0 || zy === ZONES_Y - 1);
+        if (corner) { this._genMine(zx, zy); continue; }
+
         const zoneCx = zx * ZONE_W + Math.floor(ZONE_W / 2);
         const zoneCy = zy * ZONE_H + Math.floor(ZONE_H / 2);
         if (Math.hypot(zoneCx - PLAYER_START.tx, zoneCy - PLAYER_START.ty) < 14) continue;
@@ -201,7 +240,7 @@ class ServerTileMap {
         by = Math.max(2, Math.min(by, MAP_ROWS - 10));
 
         if (frac(3) < 0.65) this._genHouse(bx, by, seed);
-        else                 this._genMine(bx, by, seed);
+        else                 this._genMine(zx, zy);
       }
     }
   }
@@ -242,41 +281,38 @@ class ServerTileMap {
     this.set(bx + Math.floor(w/2), by + Math.floor(h/2), T.CHEST);
   }
 
-  _genMine(bx, by, seed) {
-    const w = 5, h = 4;
-    bx = Math.max(2, Math.min(bx, MAP_COLS - w - 3));
-    by = Math.max(2, Math.min(by, MAP_ROWS - h - 4));
+  // Enterable mine cave (mirrors src/world.js TileMap._genMine)
+  _genMine(zx, zy) {
+    const { bx, by, w, h } = this._mineSpec(zx, zy);
 
-    // Clear surroundings
-    for (let dy = -1; dy <= h+3; dy++) {
-      for (let dx = -1; dx <= w+1; dx++) {
+    // Clear surroundings so the cave is reachable
+    for (let dy = -1; dy <= h+2; dy++) {
+      for (let dx = -1; dx <= w; dx++) {
         const tx = bx+dx, ty = by+dy;
         if (tx<0||ty<0||tx>=MAP_COLS||ty>=MAP_ROWS) continue;
         if (dx>=0&&dx<w&&dy>=0&&dy<h) continue;
         const t = this.get(tx, ty);
-        if (t===T.TREE||t===T.ROCK||t===T.HERB) this.set(tx, ty, T.GRASS);
+        if (t===T.TREE||t===T.ROCK||t===T.HERB||t===T.BERRY_BUSH) this.set(tx, ty, T.GRASS);
       }
     }
 
-    // Solid mine block
+    // Rock shell with dark cave floor inside
     for (let ty = by; ty < by+h; ty++) {
       for (let tx = bx; tx < bx+w; tx++) {
-        this.set(tx, ty, T.WOOD_WALL);
+        const wall = tx===bx||tx===bx+w-1||ty===by||ty===by+h-1;
+        this.set(tx, ty, wall ? T.CAVE_WALL : T.CAVE_FLOOR);
       }
     }
 
-    // Mine entrance tile at south-center
+    // 3-tile-wide opening at south-centre (marker tile in the middle)
     const entrTx = bx + Math.floor(w / 2);
-    this.set(entrTx, by+h-1, T.MINE_ENTRANCE);
+    const southY = by + h - 1;
+    this.set(entrTx-1, southY, T.CAVE_FLOOR);
+    this.set(entrTx,   southY, T.MINE_ENTRANCE);
+    this.set(entrTx+1, southY, T.CAVE_FLOOR);
 
-    // Chest just south of mine
-    const chestTy = by+h+1;
-    if (chestTy < MAP_ROWS-1) {
-      this.set(entrTx, by+h,  T.GRASS);
-      this.set(entrTx, chestTy, T.CHEST);
-      if (entrTx > 0)         this.set(entrTx-1, chestTy, T.GRASS);
-      if (entrTx < MAP_COLS-1) this.set(entrTx+1, chestTy, T.GRASS);
-    }
+    // Chest in the north-west corner of the cave
+    this.set(bx+2, by+2, T.CHEST);
   }
 }
 
@@ -298,6 +334,9 @@ class ServerPlayer {
     // Stats
     this.hp        = saveData?.hp    ?? 100;
     this.maxHp     = 100;
+    this.hunger    = saveData?.hunger ?? 100;
+    this.maxHunger = 100;
+    this._starveTick = 0;
     this.speed     = 160;
     this.downed    = false;
     this.dmgCooldown  = 0;
@@ -429,6 +468,19 @@ class ServerPlayer {
       if (this.hitbox.timer <= 0) this.hitbox = null;
     }
 
+    // Hunger drains over time; starving chips HP (bypasses damage cooldown)
+    this.hunger = Math.max(0, this.hunger - dt * HUNGER_DRAIN_PER_MS);
+    if (this.hunger <= 0) {
+      this._starveTick += dt;
+      if (this._starveTick >= STARVE_INTERVAL_MS) {
+        this._starveTick = 0;
+        this.hp -= STARVE_DAMAGE;
+        if (this.hp <= 0) { this.hp = 0; this.downed = true; }
+      }
+    } else {
+      this._starveTick = 0;
+    }
+
     // Unstuck from solid tiles — multi-pass so pushing out of one tile doesn't
     // leave the player inside an adjacent tile outside the original scan range.
     const ts = TILE_SIZE;
@@ -465,6 +517,7 @@ class ServerPlayer {
       y:    Math.round(this.y),
       w:    this.w, h: this.h,
       hp:   this.hp, maxHp: this.maxHp,
+      hunger: Math.round(this.hunger), maxHunger: this.maxHunger,
       downed: this.downed,
       facing: this.facing,
       weapon: this.weapon,
@@ -481,6 +534,7 @@ class ServerPlayer {
     return {
       username: this.username,
       hp:    this.hp,
+      hunger: Math.round(this.hunger),
       weapon: this.weapon,
       arrows: this.arrows,
       hasAxe: this.hasAxe,
@@ -732,9 +786,22 @@ class BipedalDeer extends ServerEnemy {
     this.phase = 1;
     this.retreated = false;
     this.returnNight = 0;
+    this.hasReturned = false; // true after coming back from its retreat
     this._chargeTimer = 3500;
     this._goatTimer   = 30000;
     this._thornTimer  = 3000;
+  }
+
+  // First defeat makes the Warden retreat (it returns 3 nights later,
+  // enraged); only the second defeat is final.
+  takeDamage(amt) {
+    if (this.retreated) return;
+    super.takeDamage(amt);
+    if (!this.alive && !this.hasReturned) {
+      this.alive = true;
+      this.retreated = true;
+      this.hp = 0;
+    }
   }
 
   update(dt, players, map, projectiles, nightNumber, spawnGoatsCb) {
@@ -779,13 +846,7 @@ class BipedalDeer extends ServerEnemy {
       }
     }
 
-    // Retreat when HP reaches 0
-    if (this.hp <= 0) {
-      this.alive = false;
-      this.retreated = true;
-      this.hp = 200; this.maxHp = 200; this.phase = 2;
-      this.returnNight = nightNumber + 3;
-    }
+    // (Retreat is handled in takeDamage; return in GameRoom._startNight.)
   }
 
   _nearest(players) {
@@ -810,7 +871,17 @@ class GameRoom {
     this.players     = [];
     this.enemies     = [];
     this.projectiles = [];
-    this.kids        = KID_POSITIONS.map((p, i) => new ServerKid(p.tx, p.ty, i));
+    this.kids        = this.map.kidSpawns.map((p, i) => new ServerKid(p.tx, p.ty, i));
+    if (saveData?.kids) {
+      saveData.kids.forEach((k, i) => {
+        if (this.kids[i]) {
+          this.kids[i].rescued = !!k.rescued;
+          this.kids[i].safe    = !!k.safe;
+        }
+      });
+    }
+    // Each unrescued kid's mine is guarded by two goats
+    this._spawnMineGuards();
 
     this.phase       = saveData?.phase       ?? 'day';
     this.nightNumber = saveData?.nightNumber ?? 0;
@@ -819,6 +890,7 @@ class GameRoom {
 
     this.waveActive         = false;
     this.currentWave        = 0;
+    this.waveMax            = 0;
     this._pendingWaves      = 0;
     this._waveTransitioning = false;
 
@@ -847,12 +919,29 @@ class GameRoom {
     return true;
   }
 
+  // Re-attach a fresh socket to an existing ServerPlayer (page refresh),
+  // preserving inventory and position.
+  reconnectPlayer(username, ws) {
+    const sp = this.players.find(p => p.username === username);
+    if (!sp) return false;
+    sp.ws = ws;
+    if (ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: 'map_init', tiles: this.map.toBase64() }));
+    }
+    this._broadcastLobbyList();
+    return true;
+  }
+
   removePlayer(username) {
     this.players = this.players.filter(p => p.username !== username);
     if (this.players.length > 0) this._broadcastLobbyList();
   }
 
   start() {
+    if (this.nightNumber === 0) {
+      this.announcementText  = 'The kids are trapped in the mines…';
+      this.announcementTimer = 4000;
+    }
     this._tickInterval = setInterval(() => this._tick(), 50); // 20 TPS
   }
 
@@ -913,18 +1002,22 @@ class GameRoom {
   }
 
   _doAttack(p) {
-    if (p.weapon === 'bow') {
-      const proj = p.shootArrow();
-      if (proj) this.projectiles.push(proj);
-      return;
-    }
+    // Selected consumable / equip takes priority (so a bandage still works
+    // with a bow equipped). Already-equipped gear falls through to attack.
     const selId = p.selectedItem();
     if (selId) {
       const rec = RECIPES.find(r => r.id === selId);
       if (rec) {
         if (rec.type === 'consumable') { this._useConsumable(p, selId, rec); return; }
-        if (rec.type === 'weapon' || rec.type === 'tool') { this._equip(p, selId, rec); return; }
+        if (rec.type === 'weapon' && p.weapon !== selId)         { this._equip(p, selId, rec); return; }
+        if (rec.type === 'tool' && selId === 'axe' && !p.hasAxe) { this._equip(p, selId, rec); return; }
       }
+    }
+    // Bow shoots only while arrows remain — otherwise fall back to melee
+    if (p.weapon === 'bow' && p.arrows > 0) {
+      const proj = p.shootArrow();
+      if (proj) this.projectiles.push(proj);
+      return;
     }
     const hb = p.swing();
     if (!hb) return;
@@ -993,9 +1086,13 @@ class GameRoom {
       if (tile === T.TREE)  { const n = p.hasAxe?2:1; p.addRes('wood', n);  this.map.chopTree(c.tx, c.ty); return; }
       if (tile === T.ROCK)  { p.addRes('stone', 1); this.map.set(c.tx, c.ty, T.GRASS); return; }
       if (tile === T.HERB)  { p.addRes('herb', randInt(1,2)); this.map.set(c.tx, c.ty, T.GRASS); return; }
+      if (tile === T.BERRY_BUSH) { p.addItem('berry', randInt(2,3)); this.map.set(c.tx, c.ty, T.GRASS); return; }
       if (tile === T.CHEST) {
         const loot = this._chestLoot(c.tx, c.ty);
-        for (const [res, amt] of Object.entries(loot)) p.addRes(res, amt);
+        for (const [res, amt] of Object.entries(loot)) {
+          if (res === 'berry') p.addItem('berry', amt);
+          else                 p.addRes(res, amt);
+        }
         this.map.set(c.tx, c.ty, T.GRASS);
         const lootStr = Object.entries(loot).map(([r,n]) => `+${n} ${r}`).join(', ');
         this.announcementText  = `${p.username} found: ${lootStr}!`;
@@ -1009,8 +1106,9 @@ class GameRoom {
     const h = n => { const v = Math.sin(n) * 43758.5; return v - Math.floor(v); };
     const s = tx * 100 + ty;
     const loot = { wood: 3 + Math.floor(h(s * 13.7) * 6) };
-    if (h(s * 27.3) > 0.4) loot.stone = 1 + Math.floor(h(s * 53.1) * 4);
-    if (h(s * 41.7) > 0.6) loot.herb  = 1 + Math.floor(h(s * 71.9) * 3);
+    if (h(s * 27.3) > 0.4)  loot.stone = 1 + Math.floor(h(s * 53.1) * 4);
+    if (h(s * 41.7) > 0.6)  loot.herb  = 1 + Math.floor(h(s * 71.9) * 3);
+    if (h(s * 33.3) > 0.45) loot.berry = 2 + Math.floor(h(s * 91.7) * 2);
     return loot;
   }
 
@@ -1035,7 +1133,7 @@ class GameRoom {
 
   _doCraft(p, recId) {
     const rec = RECIPES.find(r => r.id === recId);
-    if (!rec) return;
+    if (!rec || rec.gatherOnly) return; // gather-only items can't be crafted (they'd be free)
     for (const [res, cnt] of Object.entries(rec.cost)) {
       if ((p.res[res] || 0) < cnt) return;
     }
@@ -1047,7 +1145,8 @@ class GameRoom {
 
   _useConsumable(p, id, rec) {
     if (!p.removeItem(id)) return;
-    p.hp = Math.min(p.maxHp, p.hp + rec.heal);
+    if (rec.heal)   p.hp     = Math.min(p.maxHp,     p.hp     + rec.heal);
+    if (rec.hunger) p.hunger = Math.min(p.maxHunger, p.hunger + rec.hunger);
   }
 
   _equip(p, id, rec) {
@@ -1086,11 +1185,20 @@ class GameRoom {
         this.map.set(etx, ety, T.GRASS);
       }
     }
-    // Reset swing flags
-    for (const e of this.enemies) {
-      if (!e.hitbox) e._hitThisSwing = false;
+    // Reset swing flags once no player has an active swing hitbox
+    const anySwing = this.players.some(p => p.hitbox);
+    if (!anySwing) {
+      for (const e of this.enemies) e._hitThisSwing = false;
     }
     this.enemies = this.enemies.filter(e => e.alive);
+
+    // Warden retreat bookkeeping (works for melee, arrows and traps)
+    if (this.deer && this.deer.retreated && this.deer.returnNight === 0) {
+      this.deer.returnNight = this.nightNumber + 3;
+      this.announcementText  = 'THE WARDEN RETREATS… FOR NOW';
+      this.announcementTimer = 3000;
+    }
+    if (this.deer && !this.deer.alive) this.deerDefeated = true;
   }
 
   _updateEnemyPlayerCollisions() {
@@ -1149,9 +1257,13 @@ class GameRoom {
       this.enemies.push(this.deer);
       this.announcementText  = 'THE WARDEN AWAKENS';
       this.announcementTimer = 4000;
-    } else if (this.deer && this.deer.retreated && this.nightNumber >= this.deer.returnNight) {
-      this.deer.retreated = false;
+    } else if (this.deer && this.deer.retreated && this.deer.returnNight > 0 &&
+               this.nightNumber >= this.deer.returnNight) {
+      this.deer.retreated   = false;
+      this.deer.hasReturned = true;
       this.deer.hp = 200; this.deer.maxHp = 200; this.deer.phase = 2;
+      this.announcementText  = 'THE WARDEN RETURNS — ENRAGED';
+      this.announcementTimer = 4000;
     }
 
     if (!this.waveActive && this._pendingWaves > 0) this._startWave();
@@ -1161,7 +1273,8 @@ class GameRoom {
     this.phase      = 'day';
     this.phaseTimer = DAY_DURATION;
 
-    this.enemies = this.enemies.filter(e => e instanceof BipedalDeer);
+    // Night enemies despawn at dawn — but not the boss or mine guards
+    this.enemies = this.enemies.filter(e => e instanceof BipedalDeer || e.guard);
     this.map.onNightEnd(this.players);
 
     // Heal living players
@@ -1169,12 +1282,15 @@ class GameRoom {
       if (!p.downed) p.hp = Math.min(p.maxHp, p.hp + 10);
     }
 
-    // Farm harvest — +1 herb per farm tile, split among living players
+    // Farm harvest — +1 herb and +1 berry per farm tile, for each living player
     const farmCount = this.map.tiles.filter(t => t === T.FARM).length;
     if (farmCount > 0) {
       const living = this.players.filter(p => !p.downed);
-      for (const p of living) p.addRes('herb', farmCount);
-      this.announcementText  = `Farm harvest: +${farmCount} Herb`;
+      for (const p of living) {
+        p.addRes('herb', farmCount);
+        p.addItem('berry', farmCount);
+      }
+      this.announcementText  = `Farm harvest: +${farmCount} Herb, +${farmCount} Berries`;
       this.announcementTimer = 2000;
     }
 
@@ -1184,21 +1300,24 @@ class GameRoom {
     if (this.nightNumber >= TOTAL_NIGHTS) {
       const won = this.kidsRescued >= 4;
       this._broadcastGameEnd(won);
+      this.stop(); // game is over — no need to keep ticking
     }
   }
 
   // ── Waves ─────────────────────────────────────────────────────────────────
   _onKidRescued() {
     this._pendingWaves += 10;
+    this.waveMax = this.currentWave + this._pendingWaves;
     if (!this.waveActive) this._startWave();
   }
 
   _startWave() {
     if (this._pendingWaves <= 0) { this.waveActive = false; return; }
     this._pendingWaves--;
-    this.currentWave = 10 - this._pendingWaves;
-    this.waveActive  = true;
-    this._spawnVillagers(3 + this.currentWave);
+    this.currentWave++;
+    this.waveActive = true;
+    // wave 1 → 4 enemies … capped at 13 even when rescues stack extra waves
+    this._spawnVillagers(3 + Math.min(this.currentWave, 10));
   }
 
   _checkWaveCleared() {
@@ -1229,6 +1348,19 @@ class GameRoom {
     for (let i=0;i<n;i++) { const p=this._edgeSpawnPos(); this.enemies.push(new Goat(p.x,p.y)); }
   }
 
+  // Two goat guards inside each unrescued kid's mine. Guards are flagged so
+  // the dawn cleanup doesn't remove them.
+  _spawnMineGuards() {
+    for (const kid of this.kids) {
+      if (kid.rescued) continue;
+      for (const off of [-2, 2]) {
+        const g = new Goat(kid.x + off * TILE_SIZE, kid.y);
+        g.guard = true;
+        this.enemies.push(g);
+      }
+    }
+  }
+
   _spawnVillagers(n) {
     for (let i=0;i<n;i++) { const p=this._edgeSpawnPos(); this.enemies.push(new Villager(p.x,p.y)); }
   }
@@ -1238,7 +1370,7 @@ class GameRoom {
     const msg = JSON.stringify({
       type:         'tick',
       players:      this.players.map(p => p.toNet()),
-      enemies:      this.enemies.filter(e=>e.alive).map(e => e.toNet()),
+      enemies:      this.enemies.filter(e => e.alive && !e.retreated).map(e => e.toNet()),
       projectiles:  this.projectiles.map(p => ({ id:p.id,type:p.type,x:Math.round(p.x),y:Math.round(p.y),w:p.w,h:p.h })),
       kids:         this.kids.map(k => k.toNet()),
       phase:        this.phase,
@@ -1247,6 +1379,7 @@ class GameRoom {
       kidsRescued:  this.kidsRescued,
       waveActive:   this.waveActive,
       currentWave:  this.currentWave,
+      waveMax:      this.waveMax,
       announcement: this.announcementTimer > 0 ? this.announcementText : '',
       tileDiffs:    this.map.flushDirty(),
     });
@@ -1294,6 +1427,7 @@ class GameRoom {
       phaseTimerMs: Math.round(this.phaseTimer),
       tiles:        this.map.toBase64(),
       stumpTimers:  { ...this.map.stumpTimers },
+      kids:         this.kids.map(k => ({ rescued: k.rescued, safe: k.safe })),
       players:      this.players.map(p => p.toSave()),
     };
   }

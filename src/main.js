@@ -14,6 +14,9 @@ class Game {
 
     // Mode: 'SOLO' | 'ONLINE'
     this.menuMode = 'SOLO';
+    // Multiplayer is always selectable — network.js falls back to
+    // localhost:3000 when the game is opened as a plain file.
+    this.onlineEnabled = true;
 
     // ── Online state ──────────────────────────────────────────────────────
     this._loginFields  = { username:'', password:'', confirm:'', focus:'username' };
@@ -31,23 +34,24 @@ class Game {
     this.map      = new TileMap();
     this.camera   = new Camera();
     this.player   = new Player(PLAYER_START.tx, PLAYER_START.ty);
-    this.player2  = null;
+    this.player2  = null; // reserved for local co-op — never assigned yet
     this.crafting = new CraftingSystem(this.player);
     this.ui       = new UI(this);
     this.r3d      = new Renderer3D();
     this._enemyIdCounter = 0;
     this._patchMap();
 
-    // Entities
+    // Entities — kids are held inside the 4 corner mines, each guarded
     this.enemies     = [];
     this.projectiles = [];
-    this.kids        = KID_POSITIONS.map((p, i) => new Kid(p.tx, p.ty, i));
+    this.kids        = this.map.kidSpawns.map((p, i) => new Kid(p.tx, p.ty, i));
     this.kidsRescued = 0;
+    this._spawnMineGuards();
 
     // Wave system
     this.waveActive  = false;
     this.currentWave = 0;
-    this.waveEnemiesLeft = 0;
+    this.waveMax     = 0; // total waves queued for the current assault
 
     // Deer boss
     this.deer         = null;
@@ -82,6 +86,11 @@ class Game {
 
   _setupEvents() {
     const MODES = ['SOLO', 'ONLINE'];
+
+    // Browsers only allow audio after a user gesture — unlock on first input
+    const unlockAudio = () => { if (typeof Sfx !== 'undefined') Sfx.unlock(); };
+    window.addEventListener('keydown', unlockAudio, { once: true });
+    window.addEventListener('pointerdown', unlockAudio, { once: true });
     window.addEventListener('keydown', e => {
       if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
       this.keys[e.code] = true;
@@ -165,21 +174,16 @@ class Game {
       if (e.code === 'Escape' && this.state === 'CRAFTING') { this.state = this.menuMode === 'ONLINE' ? 'ONLINE' : 'PLAYING'; return; }
 
       if (this.state !== 'PLAYING' && this.state !== 'CRAFTING') return;
+      // (ONLINE input is handled in its own branch above — only solo
+      // PLAYING/CRAFTING reaches this point.)
 
       // P1 hotbar slots
       for (let i = 1; i <= 6; i++) {
-        if (e.code === `Digit${i}`) {
-          this.player.slot = i - 1;
-          if (this.state === 'ONLINE') this._pendingOnlineAction = `hotbar:${i-1}`;
-        }
+        if (e.code === `Digit${i}`) this.player.slot = i - 1;
       }
 
       if (e.code === 'Space' && this.state === 'PLAYING') {
         this._doAttack();
-      } else if (e.code === 'Space' && this.state === 'ONLINE') {
-        this._pendingOnlineAction = 'attack';
-      } else if (e.code === 'KeyE' && this.state === 'ONLINE') {
-        this._pendingOnlineAction = 'interact';
       } else if (e.code === 'KeyE') {
         if      (this.state === 'PLAYING')  this._doInteract();
         else if (this.state === 'CRAFTING') this.state = 'PLAYING';
@@ -200,29 +204,12 @@ class Game {
     });
 
     window.addEventListener('keyup', e => { this.keys[e.code] = false; });
+    // Safety: if the tab loses focus, release everything so no key sticks
+    window.addEventListener('blur', () => { this.keys = {}; });
 
-    // Release movement keys on mouse/touch up
-    document.addEventListener('mouseup', () => {
-      this.keys['KeyW'] = false;
-      this.keys['KeyA'] = false;
-      this.keys['KeyS'] = false;
-      this.keys['KeyD'] = false;
-    });
-
-    document.addEventListener('touchend', () => {
-      this.keys['KeyW'] = false;
-      this.keys['KeyA'] = false;
-      this.keys['KeyS'] = false;
-      this.keys['KeyD'] = false;
-    });
-
-    this.canvas.addEventListener('click', e => {
-      if (this.state !== 'CRAFTING') return;
-      const r  = this.canvas.getBoundingClientRect();
-      const sx = (e.clientX - r.left) * (CANVAS_W / r.width);
-      const sy = (e.clientY - r.top)  * (CANVAS_H / r.height);
-      this.ui.handleCraftingClick(sx, sy, this.crafting, this);
-    });
+    // (Crafting clicks are handled by the single canvas click listener in the
+    // bootstrap section below — registering a second one here caused every
+    // craft click to fire twice.)
 
     // Hidden input listeners for tablet keyboard support
     const hiddenUsername = document.getElementById('hiddenUsername');
@@ -288,11 +275,49 @@ class Game {
     }
   }
 
-  // Mobile/tablet support — using click events (also fires on tap)
+  // Mobile/tablet support — pointer events so movement lasts exactly as long
+  // as the finger is held down (click events fire after release, which used
+  // to leave the player walking forever).
   _setupTouchControls() {
-    // Click events work on tablets too, so we just need to initialize keys
-    // The main click handler below will manage D-pad and button presses
-    this._dpadPressed = {};
+    this._dpadPointers = new Map(); // pointerId → key code
+    const canvas = this.canvas;
+
+    const dpadKeyAt = (mx, my) => {
+      const s = DPAD.size;
+      const dirs = [
+        { x: DPAD.x + s,     y: DPAD.y,         key: 'KeyW' },
+        { x: DPAD.x + s,     y: DPAD.y + s * 2, key: 'KeyS' },
+        { x: DPAD.x,         y: DPAD.y + s,     key: 'KeyA' },
+        { x: DPAD.x + s * 2, y: DPAD.y + s,     key: 'KeyD' },
+      ];
+      for (const d of dirs) {
+        if (mx >= d.x && mx <= d.x + s && my >= d.y && my <= d.y + s) return d.key;
+      }
+      return null;
+    };
+
+    canvas.addEventListener('pointerdown', e => {
+      if (this.state !== 'PLAYING' && this.state !== 'ONLINE') return;
+      const r  = canvas.getBoundingClientRect();
+      const mx = (e.clientX - r.left) * (CANVAS_W / r.width);
+      const my = (e.clientY - r.top)  * (CANVAS_H / r.height);
+      const key = dpadKeyAt(mx, my);
+      if (key) {
+        this._dpadPointers.set(e.pointerId, key);
+        this.keys[key] = true;
+        try { canvas.setPointerCapture(e.pointerId); } catch {}
+      }
+    });
+
+    const release = e => {
+      const key = this._dpadPointers.get(e.pointerId);
+      if (!key) return;
+      this._dpadPointers.delete(e.pointerId);
+      // Only clear if no other finger still holds the same direction
+      if (![...this._dpadPointers.values()].includes(key)) this.keys[key] = false;
+    };
+    canvas.addEventListener('pointerup', release);
+    canvas.addEventListener('pointercancel', release);
   }
 
   // ── Login / Register handling ─────────────────────────────────────────────
@@ -515,6 +540,8 @@ class Game {
     this.nightNumber = 0;
     this.phaseTimer  = DAY_DURATION;
     this.r3d.initTiles(this.map.tiles);
+    this.announcementText  = 'The kids are trapped in the mines…';
+    this.announcementTimer = 3500;
   }
 
   _resetGame() {
@@ -526,10 +553,12 @@ class Game {
     this.crafting = new CraftingSystem(this.player);
     this.enemies  = [];
     this.projectiles = [];
-    this.kids     = KID_POSITIONS.map((p, i) => new Kid(p.tx, p.ty, i));
+    this.kids     = this.map.kidSpawns.map((p, i) => new Kid(p.tx, p.ty, i));
     this.kidsRescued = 0;
+    this._spawnMineGuards();
     this.waveActive         = false;
     this.currentWave        = 0;
+    this.waveMax            = 0;
     this._pendingWaves      = 0;
     this._waveTransitioning = false;
     this.deer = null;
@@ -547,6 +576,7 @@ class Game {
     this.phase      = 'night';
     this.phaseTimer = NIGHT_DURATION;
     this.nightNumber++;
+    if (typeof Sfx !== 'undefined') Sfx.night();
 
     // Goat spawns: 2 + floor(night/10)
     const goatCount = 2 + Math.floor(this.nightNumber / 10);
@@ -555,12 +585,17 @@ class Game {
     // Night 50: The Warden appears
     if (this.nightNumber === 50 && !this.deer) {
       this._spawnDeer();
-    } else if (this.deer && this.deer.retreated && this.nightNumber >= this.deer.returnNight) {
-      // Deer returns
-      this.deer.retreated = false;
+    } else if (this.deer && this.deer.retreated && this.deer.returnNight > 0 &&
+               this.nightNumber >= this.deer.returnNight) {
+      // The Warden returns — enraged
+      this.deer.retreated   = false;
+      this.deer.hasReturned = true;
       this.deer.maxHp = 200;
       this.deer.hp    = 200;
       this.deer.phase = 2;
+      this.announcementText  = '⚠ THE WARDEN RETURNS — ENRAGED ⚠';
+      this.announcementTimer = 4000;
+      this.camera.shake(1200, 10);
     }
 
     // If waves pending from kid rescue, start next wave
@@ -572,9 +607,10 @@ class Game {
   _startDay() {
     this.phase      = 'day';
     this.phaseTimer = DAY_DURATION;
+    if (typeof Sfx !== 'undefined') Sfx.day();
 
-    // Remove remaining night enemies (but not deer)
-    this.enemies = this.enemies.filter(e => e instanceof BipedalDeer);
+    // Remove remaining night enemies (but not the boss or mine guards)
+    this.enemies = this.enemies.filter(e => e instanceof BipedalDeer || e.guard);
 
     // Night survived bonus
     this.player.hp = Math.min(this.player.maxHp, this.player.hp + 10);
@@ -590,7 +626,8 @@ class Game {
     }
     if (farmCount > 0) {
       this.player.addRes('herb', farmCount);
-      this.announcementText  = `Farm harvest: +${farmCount} Herb`;
+      this.player.addItem('berry', farmCount);
+      this.announcementText  = `Farm harvest: +${farmCount} Herb, +${farmCount} Berries`;
       this.announcementTimer = 2000;
     }
 
@@ -613,6 +650,19 @@ class Game {
     }
   }
 
+  // Two goat guards inside each unrescued kid's mine. Guards are flagged so
+  // the dawn cleanup doesn't remove them.
+  _spawnMineGuards() {
+    for (const kid of this.kids) {
+      if (kid.rescued) continue;
+      for (const off of [-2, 2]) {
+        const g = new Goat(kid.x + off * TILE_SIZE, kid.y);
+        g.guard = true;
+        this.enemies.push(g);
+      }
+    }
+  }
+
   _spawnVillagers(n) {
     for (let i = 0; i < n; i++) {
       const pos = this._edgeSpawnPos();
@@ -628,6 +678,7 @@ class Game {
     this.announcementText  = '⚠ THE WARDEN AWAKENS ⚠';
     this.announcementTimer = 4000;
     this.camera.shake(1200, 10);
+    if (typeof Sfx !== 'undefined') Sfx.boss();
   }
 
   _edgeSpawnPos() {
@@ -646,19 +697,21 @@ class Game {
   // ── Wave system ───────────────────────────────────────────────────────────
   _onKidRescued() {
     this._pendingWaves += 10;
+    this.waveMax = this.currentWave + this._pendingWaves;
     this.announcementText  = '⚡ THEY ARE COMING! ⚡';
     this.announcementTimer = 2500;
+    if (typeof Sfx !== 'undefined') Sfx.rescue();
     if (!this.waveActive) this._startWave();
   }
 
   _startWave() {
     if (this._pendingWaves <= 0) { this.waveActive = false; return; }
     this._pendingWaves--;
-    this.currentWave = 10 - this._pendingWaves;
-    this.waveActive  = true;
-    const count = 3 + this.currentWave; // wave 1 → 4 enemies … wave 10 → 13
+    this.currentWave++;
+    this.waveActive = true;
+    // wave 1 → 4 enemies … capped at 13 even when rescues stack extra waves
+    const count = 3 + Math.min(this.currentWave, 10);
     this._spawnVillagers(count);
-    this.waveEnemiesLeft = count;
   }
 
   _checkWaveCleared() {
@@ -682,19 +735,22 @@ class Game {
     const p  = this.player;
     const id = p.selectedItem();
 
-    if (p.weapon === 'bow') {
+    // Selected consumable / equip takes priority (so a bandage still works
+    // with a bow equipped). Already-equipped gear falls through to attack.
+    if (id) {
+      const rec = RECIPES.find(r => r.id === id);
+      if (rec) {
+        if (rec.type === 'consumable') { p.useItem(id); return; }
+        if (rec.type === 'weapon' && p.weapon !== id)        { p.useItem(id); return; }
+        if (rec.type === 'tool' && id === 'axe' && !p.hasAxe) { p.useItem(id); return; }
+      }
+    }
+
+    // Bow shoots only while arrows remain — otherwise fall back to melee
+    if (p.weapon === 'bow' && p.arrows > 0) {
       const proj = p.shootArrow();
       if (proj) this.projectiles.push(proj);
       return;
-    }
-
-    // Consumable / equip
-    if (id) {
-      const rec = RECIPES.find(r => r.id === id);
-      if (rec && (rec.type === 'consumable' || rec.type === 'weapon' || rec.type === 'tool')) {
-        p.useItem(id);
-        return;
-      }
     }
 
     const hb = p.swing();
@@ -719,6 +775,68 @@ class Game {
     this.announcementText  = 'Partner revived!';
     this.announcementTimer = 1500;
     return true;
+  }
+
+  // Harvest whatever sits on (tx, ty). Returns true if something was gathered.
+  _gatherTile(p, tx, ty) {
+    const tile = this.map.get(tx, ty);
+    const feedback = (msg, t = 1400) => {
+      this.crafting.feedback = msg;
+      this.crafting.feedbackTimer = t;
+    };
+
+    if (tile === T.TREE) {
+      const count = p.hasAxe ? 2 : 1;
+      p.addRes('wood', count);
+      this.map.chopTree(tx, ty);
+      feedback(`+${count} Wood`);
+      if (typeof Sfx !== 'undefined') Sfx.chop();
+      return true;
+    }
+    if (tile === T.ROCK) {
+      p.addRes('stone', 1);
+      this.map.set(tx, ty, T.GRASS);
+      feedback('+1 Stone');
+      if (typeof Sfx !== 'undefined') Sfx.stone();
+      return true;
+    }
+    if (tile === T.HERB) {
+      const count = randInt(1, 2);
+      p.addRes('herb', count);
+      this.map.set(tx, ty, T.GRASS);
+      feedback(`+${count} Herb`);
+      if (typeof Sfx !== 'undefined') Sfx.gather();
+      return true;
+    }
+    if (tile === T.BERRY_BUSH) {
+      const count = randInt(2, 3);
+      p.addItem('berry', count);
+      this.map.set(tx, ty, T.GRASS);
+      feedback(`+${count} Berries`);
+      if (typeof Sfx !== 'undefined') Sfx.gather();
+      return true;
+    }
+    if (tile === T.CHEST) {
+      const h = n => { const v = Math.sin(n) * 43758.5; return v - Math.floor(v); };
+      const s = tx * 100 + ty;
+      const wood  = 3 + Math.floor(h(s * 13.7) * 6);
+      const stone = h(s * 27.3) > 0.4  ? 1 + Math.floor(h(s * 53.1) * 4) : 0;
+      const herb  = h(s * 41.7) > 0.6  ? 1 + Math.floor(h(s * 71.9) * 3) : 0;
+      const berry = h(s * 33.3) > 0.45 ? 2 + Math.floor(h(s * 91.7) * 2) : 0;
+      p.addRes('wood', wood);
+      if (stone) p.addRes('stone', stone);
+      if (herb)  p.addRes('herb',  herb);
+      if (berry) p.addItem('berry', berry);
+      this.map.set(tx, ty, T.GRASS);
+      let msg = `+${wood} Wood`;
+      if (stone) msg += `, +${stone} Stone`;
+      if (herb)  msg += `, +${herb} Herb`;
+      if (berry) msg += `, +${berry} Berries`;
+      feedback(msg, 2000);
+      if (typeof Sfx !== 'undefined') Sfx.gather();
+      return true;
+    }
+    return false;
   }
 
   _doInteract() {
@@ -763,44 +881,7 @@ class Game {
     ];
 
     for (const c of gatherCandidates) {
-      const tile = this.map.get(c.tx, c.ty);
-      if (tile === T.TREE) {
-        const count = p.hasAxe ? 2 : 1;
-        p.addRes('wood', count);
-        this.map.chopTree(c.tx, c.ty);
-        this.crafting.feedback = `+${count} Wood`;
-        this.crafting.feedbackTimer = 1400;
-        return;
-      } else if (tile === T.ROCK) {
-        p.addRes('stone', 1);
-        this.map.set(c.tx, c.ty, T.GRASS);
-        this.crafting.feedback = '+1 Stone';
-        this.crafting.feedbackTimer = 1400;
-        return;
-      } else if (tile === T.HERB) {
-        const count = randInt(1, 2);
-        p.addRes('herb', count);
-        this.map.set(c.tx, c.ty, T.GRASS);
-        this.crafting.feedback = `+${count} Herb`;
-        this.crafting.feedbackTimer = 1400;
-        return;
-      } else if (tile === T.CHEST) {
-        const h = n => { const v = Math.sin(n) * 43758.5; return v - Math.floor(v); };
-        const s = c.tx * 100 + c.ty;
-        const wood  = 3 + Math.floor(h(s * 13.7) * 6);
-        const stone = h(s * 27.3) > 0.4 ? 1 + Math.floor(h(s * 53.1) * 4) : 0;
-        const herb  = h(s * 41.7) > 0.6 ? 1 + Math.floor(h(s * 71.9) * 3) : 0;
-        p.addRes('wood',  wood);
-        if (stone) p.addRes('stone', stone);
-        if (herb)  p.addRes('herb',  herb);
-        this.map.set(c.tx, c.ty, T.GRASS);
-        let msg = `+${wood} Wood`;
-        if (stone) msg += `, +${stone} Stone`;
-        if (herb)  msg += `, +${herb} Herb`;
-        this.crafting.feedback = msg;
-        this.crafting.feedbackTimer = 2000;
-        return;
-      }
+      if (this._gatherTile(p, c.tx, c.ty)) return;
     }
 
     // Priority 4: crafting table — open if nearby and nothing else to do
@@ -849,14 +930,7 @@ class Game {
       { tx: pcx + 1, ty: pcy },
     ];
     for (const c of candidates) {
-      if (this.map.get(c.tx, c.ty) === T.TREE) {
-        const count = p.hasAxe ? 2 : 1;
-        p.addRes('wood', count);
-        this.map.chopTree(c.tx, c.ty);
-        this.crafting.feedback = `+${count} Wood`;
-        this.crafting.feedbackTimer = 1400;
-        return;
-      }
+      if (this.map.get(c.tx, c.ty) === T.TREE && this._gatherTile(p, c.tx, c.ty)) return;
     }
   }
 
@@ -888,27 +962,11 @@ class Game {
       { tx: pcx + 1, ty: pcy },
     ];
     for (const c of candidates) {
-      if (this.map.get(c.tx, c.ty) === T.CHEST) {
-        const h = n => { const v = Math.sin(n) * 43758.5; return v - Math.floor(v); };
-        const s = c.tx * 100 + c.ty;
-        const wood  = 3 + Math.floor(h(s * 13.7) * 6);
-        const stone = h(s * 27.3) > 0.4 ? 1 + Math.floor(h(s * 53.1) * 4) : 0;
-        const herb  = h(s * 41.7) > 0.6 ? 1 + Math.floor(h(s * 71.9) * 3) : 0;
-        p.addRes('wood',  wood);
-        if (stone) p.addRes('stone', stone);
-        if (herb)  p.addRes('herb',  herb);
-        this.map.set(c.tx, c.ty, T.GRASS);
-        let msg = `+${wood} Wood`;
-        if (stone) msg += `, +${stone} Stone`;
-        if (herb)  msg += `, +${herb} Herb`;
-        this.crafting.feedback = msg;
-        this.crafting.feedbackTimer = 2000;
-        return;
-      }
+      if (this.map.get(c.tx, c.ty) === T.CHEST && this._gatherTile(p, c.tx, c.ty)) return;
     }
   }
 
-  _drawPlacementHighlight(ctx, camX, camY, player) {
+  _drawPlacementHighlight(ctx, player) {
     const selId = typeof player.selectedItem === 'function'
       ? player.selectedItem()
       : (player.hotbar || [])[player.slot || 0];
@@ -922,56 +980,58 @@ class Game {
     const ty = Math.floor(cy / TILE_SIZE);
 
     const canPlace = this.map.get(tx, ty) === T.GRASS;
-    const sx = tx * TILE_SIZE - camX;
-    const sy = ty * TILE_SIZE - camY;
+
+    // Project the tile's 4 ground corners through the 3D camera
+    const ts = TILE_SIZE;
+    const corners = [
+      [tx * ts, ty * ts], [(tx + 1) * ts, ty * ts],
+      [(tx + 1) * ts, (ty + 1) * ts], [tx * ts, (ty + 1) * ts],
+    ].map(([wx, wy]) => this.r3d.worldToScreen(wx, wy, 0.02));
+    if (corners.some(c => !c)) return;
 
     ctx.save();
     ctx.strokeStyle = canPlace ? 'rgba(80,160,255,0.9)' : 'rgba(255,80,80,0.9)';
     ctx.fillStyle   = canPlace ? 'rgba(80,160,255,0.25)' : 'rgba(255,80,80,0.25)';
     ctx.lineWidth = 2;
-    ctx.fillRect(sx, sy, TILE_SIZE, TILE_SIZE);
-    ctx.strokeRect(sx, sy, TILE_SIZE, TILE_SIZE);
+    ctx.beginPath();
+    ctx.moveTo(corners[0].x, corners[0].y);
+    for (let i = 1; i < 4; i++) ctx.lineTo(corners[i].x, corners[i].y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
     ctx.restore();
   }
 
-  _drawMineLabels(ctx, camX, camY, player) {
+  _drawMineLabels(ctx, player) {
     if (!player) return;
+    // Screen position comes from projecting the tile centre through the 3D
+    // camera — the old top-down 2D math put labels in the wrong place.
+    const label = (tx, ty, height, text, color, boxW) => {
+      const s = this.r3d.worldToScreen((tx + 0.5) * TILE_SIZE, (ty + 0.5) * TILE_SIZE, height);
+      if (!s) return;
+      ctx.fillStyle = 'rgba(0,0,0,0.75)';
+      ctx.fillRect(s.x - boxW / 2, s.y - 11, boxW, 14);
+      ctx.fillStyle = color;
+      ctx.font = 'bold 9px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(text, s.x, s.y);
+    };
+
     const ptx = Math.floor((player.x + (player.w || 24) / 2) / TILE_SIZE);
     const pty = Math.floor((player.y + (player.h || 24) / 2) / TILE_SIZE);
     for (let ty = pty - 5; ty <= pty + 5; ty++) {
       for (let tx = ptx - 5; tx <= ptx + 5; tx++) {
         const tile = this.map.get(tx, ty);
         if (tile === T.MINE_ENTRANCE) {
-          const sx = tx * TILE_SIZE - camX + TILE_SIZE / 2;
-          const sy = ty * TILE_SIZE - camY;
-          ctx.fillStyle = 'rgba(0,0,0,0.78)';
-          ctx.fillRect(sx - 35, sy - 18, 70, 14);
-          ctx.fillStyle = '#ff4444';
-          ctx.font = 'bold 9px monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText('DO NOT ENTER', sx, sy - 7);
+          label(tx, ty, 1.4, 'DO NOT ENTER', '#ff4444', 74);
         } else if (tile === T.DOOR && Math.abs(tx - ptx) <= 1 && Math.abs(ty - pty) <= 1) {
-          const sx = tx * TILE_SIZE - camX + TILE_SIZE / 2;
-          const sy = ty * TILE_SIZE - camY;
-          ctx.fillStyle = 'rgba(0,0,0,0.7)';
-          ctx.fillRect(sx - 26, sy - 18, 52, 14);
-          ctx.fillStyle = '#ffd700';
-          ctx.font = '9px monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText('[Enter] Door', sx, sy - 7);
+          label(tx, ty, 1.5, '[Enter] Door', '#ffd700', 66);
         } else if (tile === T.CHEST && Math.abs(tx - ptx) <= 2 && Math.abs(ty - pty) <= 2) {
-          const sx = tx * TILE_SIZE - camX + TILE_SIZE / 2;
-          const sy = ty * TILE_SIZE - camY;
-          ctx.fillStyle = 'rgba(0,0,0,0.7)';
-          ctx.fillRect(sx - 24, sy - 18, 48, 14);
-          ctx.fillStyle = '#ffd700';
-          ctx.font = '9px monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText('[E] Open', sx, sy - 7);
+          label(tx, ty, 0.9, '[E] Open', '#ffd700', 50);
         }
-        ctx.textAlign = 'left';
       }
     }
+    ctx.textAlign = 'left';
   }
 
   _doUseDoor() {
@@ -1005,9 +1065,14 @@ class Game {
       else                         this._startDay();
     }
 
-    // Player update
+    // Player update (WASD or arrow keys)
     const k = this.keys;
-    p.update(dt, k['KeyW'], k['KeyS'], k['KeyA'], k['KeyD'], this.map);
+    p.update(dt,
+      k['KeyW'] || k['ArrowUp'],
+      k['KeyS'] || k['ArrowDown'],
+      k['KeyA'] || k['ArrowLeft'],
+      k['KeyD'] || k['ArrowRight'],
+      this.map);
 
 
     // Proximity to crafting table (keep in sync with _doInteract range)
@@ -1103,6 +1168,17 @@ class Game {
     }
     this.projectiles = this.projectiles.filter(pr => pr.alive);
 
+    // Warden retreat/defeat bookkeeping (works for melee, arrows and traps)
+    if (this.deer) {
+      if (this.deer.retreated && this.deer.returnNight === 0) {
+        this.deer.returnNight = this.nightNumber + 3;
+        this.announcementText  = 'THE WARDEN RETREATS… FOR NOW';
+        this.announcementTimer = 3000;
+        this.camera.shake(800, 6);
+      }
+      if (!this.deer.alive) this.deerDefeated = true;
+    }
+
     // Wave cleared check
     this._checkWaveCleared();
 
@@ -1112,8 +1188,9 @@ class Game {
     // Camera
     this.camera.update(p, dt);
 
-    // Night survived banner
+    // Night survived banner + announcement (dt-based, not per-frame)
     if (this.nightSurvivedBanner > 0) this.nightSurvivedBanner -= dt;
+    if (this.announcementTimer  > 0) this.announcementTimer  -= dt;
 
     // Game over
     if (p.downed) this.state = 'GAME_OVER';
@@ -1157,7 +1234,7 @@ class Game {
       x: this.player.x, y: this.player.y, w: this.player.w, h: this.player.h,
       bodyColor: this.player.bodyColor, downed: this.player.downed
     }]);
-    this.r3d.updateEnemies(this.enemies.filter(e => e.alive).map(e => {
+    this.r3d.updateEnemies(this.enemies.filter(e => e.alive && !e.retreated).map(e => {
       if (!e._r3dId) e._r3dId = ++this._enemyIdCounter;
       return {
         id: e._r3dId,
@@ -1172,8 +1249,8 @@ class Game {
     this.r3d.render();
 
     // 2D HUD overlay
-    this._drawMineLabels(ctx, cam.x, cam.y, this.player);
-    this._drawPlacementHighlight(ctx, cam.x, cam.y, this.player);
+    this._drawMineLabels(ctx, this.player);
+    this._drawPlacementHighlight(ctx, this.player);
     this.ui.drawHUD(ctx, this);
     this.ui.drawMobileControls(ctx);
 
@@ -1208,8 +1285,6 @@ class Game {
     // 3D world rendering — 2D canvas is a transparent HUD overlay
     ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
     const me = s.players.find(p => p.username === Net.username) || s.players[0];
-    const camX = me ? clamp(me.x + me.w/2 - CANVAS_W/2, 0, MAP_COLS*TILE_SIZE - CANVAS_W) : 0;
-    const camY = me ? clamp(me.y + me.h/2 - CANVAS_H/2, 0, MAP_ROWS*TILE_SIZE - CANVAS_H) : 0;
 
     this.r3d.setPhase(s.phase);
     if (me) this.r3d.updateCamera(me.x, me.y, me.w, me.h);
@@ -1220,20 +1295,29 @@ class Game {
     this.r3d.render();
 
     // 2D HUD overlay
-    this._drawMineLabels(ctx, camX, camY, me);
+    this._drawMineLabels(ctx, me);
     if (me) {
-      const meWithFacing = Object.assign({}, me, { facing: this.player.facing, items: me.items || {} });
-      this._drawPlacementHighlight(ctx, camX, camY, meWithFacing);
+      const meWithFacing = Object.assign({}, me, { facing: me.facing || this.player.facing, items: me.items || {} });
+      this._drawPlacementHighlight(ctx, meWithFacing);
     }
+
+    // Day/night chime when the server phase flips
+    if (this._prevOnlinePhase && this._prevOnlinePhase !== s.phase && typeof Sfx !== 'undefined') {
+      if (s.phase === 'night') Sfx.night(); else Sfx.day();
+    }
+    this._prevOnlinePhase = s.phase;
 
     // HUD — reuse existing drawHUD but substitute server data
     const fakeGame = {
-      player:  me ? { hp:me.hp, maxHp:me.maxHp, res:me.res||{wood:0,stone:0,herb:0},
+      player:  me ? { hp:me.hp, maxHp:me.maxHp,
+                      hunger:me.hunger ?? 100, maxHunger:me.maxHunger ?? 100,
+                      res:me.res||{wood:0,stone:0,herb:0},
                       arrows:me.arrows||0, weapon:me.weapon||'fist',
                       hotbar:me.hotbar||[], slot:me.slot||0, items:me.items||{} } : this.player,
       player2: null,
       phase:   s.phase, nightNumber:s.nightNumber, phaseTimer:s.phaseTimer,
-      kidsRescued:s.kidsRescued, waveActive:s.waveActive, currentWave:s.currentWave,
+      kidsRescued:s.kidsRescued, waveActive:s.waveActive,
+      currentWave:s.currentWave, waveMax:s.waveMax,
       nearCraftingTable:false,
       announcementText: s.announcement||'', announcementTimer: s.announcement ? 1 : 0,
       crafting: { feedbackTimer:0 },
@@ -1409,119 +1493,47 @@ document.getElementById('game').addEventListener('click', e => {
     return;
   }
 
-  // ── PLAYING (hotbar + mobile controls) ─────────────────────────────────
-  if (game.state === 'PLAYING') {
-    // Mobile D-pad (bottom-left, higher up)
-    const padSize = 20;
-    const padX = 16, padY = CANVAS_H - 170;
-    const dirs = [
-      { label: '↑', x: padX+padSize, y: padY, key: 'KeyW' },
-      { label: '↓', x: padX+padSize, y: padY+padSize*2, key: 'KeyS' },
-      { label: '←', x: padX, y: padY+padSize, key: 'KeyA' },
-      { label: '→', x: padX+padSize*2, y: padY+padSize, key: 'KeyD' },
-    ];
-    for (const d of dirs) {
-      if (mx >= d.x && mx <= d.x+padSize && my >= d.y && my <= d.y+padSize) {
-        // Hold the key down — keep it true
-        game.keys[d.key] = true;
+  // ── PLAYING / ONLINE (action buttons + hotbar; D-pad uses pointer events) ─
+  if (game.state === 'PLAYING' || game.state === 'ONLINE') {
+    const online = game.state === 'ONLINE';
+
+    // Action buttons — positions shared with ui.drawMobileControls
+    const { w: btnW, h: btnH, gap } = TOUCH_BTN;
+    const attackX = CANVAS_W - btnW - 8;
+    const attackY = CANVAS_H - btnH*3 - gap*2 - 8;
+    const interactX = CANVAS_W - btnW*2 - gap - 8;
+    const interactY = CANVAS_H - btnH*2 - gap - 8;
+    const craftX = CANVAS_W - btnW - 8;
+    const craftY = CANVAS_H - btnH - 8;
+
+    // Attack button
+    if (mx >= attackX && mx <= attackX+btnW && my >= attackY && my <= attackY+btnH) {
+      if (online) { game._pendingOnlineAction = 'attack'; game._sendOnlineInput(); }
+      else        { game._doAttack(); }
+      return;
+    }
+
+    // Interact button
+    if (mx >= interactX && mx <= interactX+btnW && my >= interactY && my <= interactY+btnH) {
+      if (online) { game._pendingOnlineAction = 'interact'; game._sendOnlineInput(); }
+      else        { game._doInteract(); }
+      return;
+    }
+
+    // Crafting button
+    if (mx >= craftX && mx <= craftX+btnW && my >= craftY && my <= craftY+btnH) {
+      game.state = 'CRAFTING';
+      return;
+    }
+
+    // Hotbar clicks — geometry shared with ui.drawHotbar
+    for (let i = 0; i < HOTBAR.count; i++) {
+      const x = HOTBAR.x + i * HOTBAR.slotW;
+      if (mx >= x && mx <= x + HOTBAR.slotW - 2 &&
+          my >= HOTBAR.y && my <= HOTBAR.y + HOTBAR.slotH - 2) {
+        if (online) { game._pendingOnlineAction = `hotbar:${i}`; game._sendOnlineInput(); }
+        else        { game.player.slot = i; }
         return;
-      }
-    }
-
-    // Action buttons (higher up)
-    const btnW = 44, btnH = 32, gap = 8;
-    const attackX = CANVAS_W - btnW - 8;
-    const attackY = CANVAS_H - btnH*3 - gap*2 - 8;
-    const interactX = CANVAS_W - btnW*2 - gap - 8;
-    const interactY = CANVAS_H - btnH*2 - gap - 8;
-    const craftX = CANVAS_W - btnW - 8;
-    const craftY = CANVAS_H - btnH - 8;
-
-    // Attack button
-    if (mx >= attackX && mx <= attackX+btnW && my >= attackY && my <= attackY+btnH) {
-      game._doAttack();
-      return;
-    }
-
-    // Interact button
-    if (mx >= interactX && mx <= interactX+btnW && my >= interactY && my <= interactY+btnH) {
-      game._doInteract();
-      return;
-    }
-
-    // Crafting button
-    if (mx >= craftX && mx <= craftX+btnW && my >= craftY && my <= craftY+btnH) {
-      game.state = 'CRAFTING';
-      return;
-    }
-
-    // Hotbar clicks
-    const hotbarY = CANVAS_H - 30;
-    const hotbarX = CANVAS_W/2 - 90;
-    for (let i = 0; i < 6; i++) {
-      const x = hotbarX + i * 30;
-      if (mx >= x && mx <= x + 28 && my >= hotbarY - 8 && my <= hotbarY + 18) {
-        game._pendingAction = `hotbar:${i}`;
-        game._doInteract();
-      }
-    }
-    return;
-  }
-
-  // ── ONLINE (similar controls) ──────────────────────────────────────────
-  if (game.state === 'ONLINE') {
-    // Mobile D-pad (bottom-left)
-    const padSize = 20;
-    const padX = 16, padY = CANVAS_H - 80;
-    const dirs = [
-      { label: '↑', x: padX+padSize, y: padY, keys: { ArrowUp: true } },
-      { label: '↓', x: padX+padSize, y: padY+padSize*2, keys: { ArrowDown: true } },
-      { label: '←', x: padX, y: padY+padSize, keys: { ArrowLeft: true } },
-      { label: '→', x: padX+padSize*2, y: padY+padSize, keys: { ArrowRight: true } },
-    ];
-    for (const d of dirs) {
-      if (mx >= d.x && mx <= d.x+padSize && my >= d.y && my <= d.y+padSize) {
-        game.keys = { ...game.keys, ...d.keys };
-      }
-    }
-
-    // Action buttons (must match drawMobileControls positions)
-    const btnW = 44, btnH = 32, gap = 8;
-    const attackX = CANVAS_W - btnW - 8;
-    const attackY = CANVAS_H - btnH*3 - gap*2 - 8;
-    const interactX = CANVAS_W - btnW*2 - gap - 8;
-    const interactY = CANVAS_H - btnH*2 - gap - 8;
-    const craftX = CANVAS_W - btnW - 8;
-    const craftY = CANVAS_H - btnH - 8;
-
-    // Attack button
-    if (mx >= attackX && mx <= attackX+btnW && my >= attackY && my <= attackY+btnH) {
-      game._pendingOnlineAction = 'attack';
-      game._sendOnlineInput();
-      return;
-    }
-
-    // Interact button
-    if (mx >= interactX && mx <= interactX+btnW && my >= interactY && my <= interactY+btnH) {
-      game._pendingOnlineAction = 'interact';
-      game._sendOnlineInput();
-      return;
-    }
-
-    // Crafting button
-    if (mx >= craftX && mx <= craftX+btnW && my >= craftY && my <= craftY+btnH) {
-      game.state = 'CRAFTING';
-      return;
-    }
-
-    // Hotbar clicks
-    const hotbarY = CANVAS_H - 30;
-    const hotbarX = CANVAS_W/2 - 90;
-    for (let i = 0; i < 6; i++) {
-      const x = hotbarX + i * 30;
-      if (mx >= x && mx <= x + 28 && my >= hotbarY - 8 && my <= hotbarY + 18) {
-        game._pendingOnlineAction = `hotbar:${i}`;
-        game._sendOnlineInput();
       }
     }
     return;

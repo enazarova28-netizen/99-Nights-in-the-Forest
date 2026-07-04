@@ -6,25 +6,31 @@ class Renderer3D {
   constructor() {
     // WebGL renderer — new canvas inserted BEFORE the 2D canvas
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
-    this.renderer.setSize(CANVAS_W, CANVAS_H);
+    // false = keep the internal resolution but let CSS control display size
+    this.renderer.setSize(CANVAS_W, CANVAS_H, false);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     const canvas2d = document.getElementById('game');
     const wrap = canvas2d.parentNode;
 
+    // Responsive container: fills the window while keeping the 4:3 aspect.
+    // Input code divides by getBoundingClientRect() so hit-testing survives
+    // any display size.
     const container = document.createElement('div');
     container.style.cssText =
-      `position:relative;display:block;width:${CANVAS_W}px;height:${CANVAS_H}px;` +
+      `position:relative;display:block;` +
+      `width:min(100vw - 16px, calc((100vh - 16px) * ${CANVAS_W / CANVAS_H}));` +
+      `aspect-ratio:${CANVAS_W} / ${CANVAS_H};` +
       `border:2px solid #1a3a1a;flex-shrink:0;`;
     wrap.insertBefore(container, canvas2d);
     container.appendChild(this.renderer.domElement);
     container.appendChild(canvas2d);
 
     this.renderer.domElement.style.cssText =
-      'position:absolute;top:0;left:0;display:block;';
+      'position:absolute;top:0;left:0;display:block;width:100%;height:100%;';
     canvas2d.style.cssText =
-      'position:absolute;top:0;left:0;display:block;pointer-events:auto;border:none;';
+      'position:absolute;top:0;left:0;display:block;width:100%;height:100%;pointer-events:auto;border:none;';
 
     // Scene
     this.scene = new THREE.Scene();
@@ -132,6 +138,10 @@ class Renderer3D {
       stumpRing:   c(0xa07040),
       farmDirt:    c(0x4a3a1a),
       farmCrop:    c(0x5db83a),
+      caveWall:    c(0x3b3b45),
+      caveFloor:   c(0x17171d),
+      bush:        c(0x2f7a1f),
+      berry:       c(0xd8283a),
       skin:        c(0xffcc99),
       hatRed:      c(0xcc2222),
     };
@@ -341,18 +351,54 @@ class Renderer3D {
         break;
       }
       case T.MINE_ENTRANCE: {
-        // Dark fill
-        const fill = this._addShadow(new THREE.Mesh(
-          new THREE.BoxGeometry(1, 0.95, 0.18), M.mine));
-        fill.position.set(0, 0.475, 0);
-        g.add(fill);
-        // X-boards
-        for (const a of [0.55, -0.55]) {
-          const plank = new THREE.Mesh(
-            new THREE.BoxGeometry(1.1, 0.08, 0.06), M.minePlank);
-          plank.rotation.z = a;
-          plank.position.set(0, 0.48, 0.1);
-          g.add(plank);
+        // Open cave mouth: dark floor + timber posts and lintel to walk through
+        const fl = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), M.caveFloor);
+        fl.rotation.x = -Math.PI / 2;
+        fl.position.set(0, 0.012, 0);
+        fl.receiveShadow = true;
+        g.add(fl);
+        for (const px of [-0.45, 0.45]) {
+          const post = this._addShadow(new THREE.Mesh(
+            new THREE.BoxGeometry(0.12, 1.15, 0.12), M.minePlank));
+          post.position.set(px, 0.575, 0);
+          g.add(post);
+        }
+        const lintel = this._addShadow(new THREE.Mesh(
+          new THREE.BoxGeometry(1.05, 0.12, 0.16), M.minePlank));
+        lintel.position.set(0, 1.15, 0);
+        g.add(lintel);
+        break;
+      }
+      case T.CAVE_WALL: {
+        const rock = this._addShadow(new THREE.Mesh(
+          new THREE.BoxGeometry(1, 1.2, 1), M.caveWall));
+        rock.position.set(0, 0.6, 0);
+        g.add(rock);
+        const cap = new THREE.Mesh(new THREE.DodecahedronGeometry(0.34, 0), M.rockDark);
+        cap.scale.set(1, 0.5, 1);
+        cap.position.set(0, 1.28, 0);
+        g.add(cap);
+        break;
+      }
+      case T.CAVE_FLOOR: {
+        const fl = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), M.caveFloor);
+        fl.rotation.x = -Math.PI / 2;
+        fl.position.set(0, 0.012, 0);
+        fl.receiveShadow = true;
+        g.add(fl);
+        break;
+      }
+      case T.BERRY_BUSH: {
+        const bush = this._addShadow(new THREE.Mesh(
+          new THREE.SphereGeometry(0.32, 7, 6), M.bush));
+        bush.scale.set(1, 0.75, 1);
+        bush.position.set(0, 0.26, 0);
+        g.add(bush);
+        for (let i = 0; i < 5; i++) {
+          const b = new THREE.Mesh(new THREE.SphereGeometry(0.05, 5, 5), M.berry);
+          const a = i * 1.26;
+          b.position.set(Math.cos(a) * 0.22, 0.3 + (i % 2) * 0.12, Math.sin(a) * 0.22);
+          g.add(b);
         }
         break;
       }
@@ -543,6 +589,20 @@ class Renderer3D {
     const wz = py / TILE_SIZE + ph / (2 * TILE_SIZE);
     this.camera.position.set(wx, 11, wz + 9);
     this.camera.lookAt(wx, 0, wz - 1);
+  }
+
+  // ── World → screen projection for the 2D HUD overlay ─────────────────────
+  // wx/wy are game-pixel coordinates on the map plane, wh is height above the
+  // ground in world units. Returns 2D canvas coords, or null when the point
+  // is behind the camera.
+  worldToScreen(wx, wy, wh = 0) {
+    const v = new THREE.Vector3(wx / TILE_SIZE, wh, wy / TILE_SIZE);
+    v.project(this.camera);
+    if (v.z > 1) return null;
+    return {
+      x: (v.x + 1) / 2 * CANVAS_W,
+      y: (1 - v.y) / 2 * CANVAS_H,
+    };
   }
 
   // ── Day / night lighting ──────────────────────────────────────────────────

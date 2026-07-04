@@ -12,6 +12,7 @@ class Entity {
     this.hp -= amt;
     this.flashTimer = 180;
     if (this.hp <= 0) { this.hp = 0; this.alive = false; }
+    if (typeof Sfx !== 'undefined') Sfx.hit();
   }
 
   moveX(dx, map) {
@@ -80,6 +81,9 @@ class Player extends Entity {
     this.isPlayer  = true;
     this.maxHp     = 100;
     this.hp        = 100;
+    this.hunger    = 100;
+    this.maxHunger = 100;
+    this._starveTick = 0;
     this.speed     = 160;
     this.facing    = { x: 1, y: 0 };
     this.bodyColor = '#4488ff';
@@ -142,6 +146,7 @@ class Player extends Entity {
     const cy = this.y + this.h / 2 + this.facing.y * reach;
     const dmg = this.weapon === 'spear' ? 25 : 15;
     this.hitbox = { x: cx - hw / 2, y: cy - hw / 2, w: hw, h: hw, dmg, timer: 200 };
+    if (typeof Sfx !== 'undefined') Sfx.swing();
     return this.hitbox;
   }
 
@@ -149,6 +154,7 @@ class Player extends Entity {
     if (this.weapon !== 'bow' || this.arrows <= 0 || this.atkCooldown > 0) return null;
     this.atkCooldown = 700;
     this.arrows--;
+    if (typeof Sfx !== 'undefined') Sfx.arrow();
     return {
       type: 'arrow',
       x: this.x + this.w / 2, y: this.y + this.h / 2,
@@ -162,7 +168,9 @@ class Player extends Entity {
     if (!rec) return false;
     if (rec.type === 'consumable') {
       if (!this.removeItem(id)) return false;
-      this.hp = Math.min(this.maxHp, this.hp + rec.heal);
+      if (rec.heal)   this.hp     = Math.min(this.maxHp,     this.hp     + rec.heal);
+      if (rec.hunger) this.hunger = Math.min(this.maxHunger, this.hunger + rec.hunger);
+      if (typeof Sfx !== 'undefined') Sfx.eat();
       return true;
     }
     if (rec.type === 'weapon' || rec.type === 'tool') {
@@ -177,6 +185,7 @@ class Player extends Entity {
     this.hp -= amt;
     this.flashTimer = 180;
     if (this.hp <= 0) { this.hp = 0; this.downed = true; }
+    if (typeof Sfx !== 'undefined') Sfx.hurt();
   }
 
   revive(hp = 25) {
@@ -210,6 +219,19 @@ class Player extends Entity {
     if (this.hitbox) {
       this.hitbox.timer -= dt;
       if (this.hitbox.timer <= 0) this.hitbox = null;
+    }
+
+    // Hunger drains over time; starving chips HP
+    this.hunger = Math.max(0, this.hunger - dt * HUNGER_DRAIN_PER_MS);
+    if (this.hunger <= 0) {
+      this._starveTick += dt;
+      if (this._starveTick >= STARVE_INTERVAL_MS) {
+        this._starveTick = 0;
+        this.takeDamage(STARVE_DAMAGE);
+        if (typeof Sfx !== 'undefined') Sfx.starve();
+      }
+    } else {
+      this._starveTick = 0;
     }
 
     // Always push out of any solid tile (handles enemy shoves, regrown trees, etc.)

@@ -1,6 +1,7 @@
 const express = require('express');
 const { authMiddleware } = require('./auth');
 const { GameRoom } = require('./gameRoom');
+const { getUserByUsername, getSave } = require('./db');
 
 const router  = express.Router();
 const lobbies = new Map(); // id → LobbyObj
@@ -9,13 +10,21 @@ let _lobbyCounter = 1;
 
 function createLobby(name, hostUsername) {
   const id = String(_lobbyCounter++);
+
+  // Restore the host's last save (if any) so the room continues their run.
+  // Finished runs start fresh.
+  let saveData = null;
+  const host = getUserByUsername(hostUsername);
+  if (host) saveData = getSave(host.id) || null;
+  if (saveData && (saveData.nightNumber ?? 0) >= 99) saveData = null;
+
   lobbies.set(id, {
     id,
     name,
     hostUsername,
     players:   [],   // { username, ws, playerIdx }
     roomState: null, // GameRoom | null
-    saveData:  null, // optional save to load on room start
+    saveData,        // save to load when the room is created
   });
   return id;
 }
